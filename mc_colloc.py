@@ -11,9 +11,6 @@ class Collocation():
     self.optim_iter = 0
 
   def guess(self):
-    # x0 = np.linspace(init_position, goal_position, self.time)
-    # v0 = np.linspace(init_velocity, goal_velocity, self.time)
-    # u0 = np.zeros(self.time)
     x0 = np.random.rand(self.time) - 0.5
     v0 = np.random.rand(self.time) - 0.5
     u0 = np.random.rand(self.time) - 0.5
@@ -21,10 +18,10 @@ class Collocation():
     return z0
 
   def objective(self, z):
-    return -np.sum(np.square(z[-self.time:]))
+    return np.sum(np.square(z[-self.time:]))
 
   def dynamics_constraint(self, z):
-    # Dynamics for MountainCarContinuous:
+    # Dynamics:
     # v += u * self.env.power - 0.0025 * math.cos(3 * x)
     # x += v
     x, u, v = np.split(z, 3)
@@ -40,7 +37,7 @@ class Collocation():
 
     return np.concatenate((position_constraint, velocity_constraint))
 
-  def colloc_hard_constraints(self, method):
+  def solve(self, method):
     # Define initial and goal states
     init_position = self.env.state[0]
     goal_position = self.env.goal_position
@@ -87,12 +84,6 @@ class Collocation():
     self.print_summary(res)
     return res
 
-  def colloc_soft_constraints(self):
-    pass
-
-  def colloc_inverse_dynamics(self):
-    pass
-
   def simulate(self, actions=None, render=True):
     total_reward = 0
     for i in range(self.time):
@@ -128,5 +119,5 @@ class Collocation():
 if __name__ == '__main__':
   env = gym.make('MountainCarContinuous-v0')
   colloc = Collocation(env, 150)
-  colloc.colloc_hard_constraints('SLSQP')
+  colloc.solve('SLSQP')
   env.close()
