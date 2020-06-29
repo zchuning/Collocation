@@ -11,6 +11,12 @@ class InverseDynamicsCollocation():
     self.env = env
     self.t = time
     self.optim_iter = 0
+    # Define initial and goal states
+    self.init_position = self.env.state[0]
+    self.init_velocity = self.env.state[1]
+    self.goal_position = self.env.goal_position
+    self.goal_velocity = 0
+    print("Initial position: {0}. Initial velocity: {1}".format(self.init_position, self.init_velocity))
 
   def guess(self):
     x0 = np.random.rand(self.t) - 0.5
@@ -35,13 +41,6 @@ class InverseDynamicsCollocation():
     return [position_constraint, velocity_constraint]
 
   def solve(self):
-    # Define initial and goal states
-    init_position = self.env.state[0]
-    init_velocity = self.env.state[1]
-    goal_position = self.env.goal_position
-    goal_velocity = 0
-    print("Initial position: {0}. Initial velocity: {1}".format(init_position, init_velocity))
-
     # Guess initial values of decision variables
     z0 = self.guess()
 
@@ -51,13 +50,13 @@ class InverseDynamicsCollocation():
     # Path and boundary constraints
     x_lb = np.ones(self.t) * self.env.min_position
     x_ub = np.ones(self.t) * self.env.max_position
-    x_lb[0] = x_ub[0] = init_position
-    x_lb[-1] = x_ub[-1] = goal_position
+    x_lb[0] = x_ub[0] = self.init_position
+    x_lb[-1] = x_ub[-1] = self.goal_position
 
     v_lb = np.ones(self.t) * self.env.max_speed * -1
     v_ub = np.ones(self.t) * self.env.max_speed
-    v_lb[0] = v_ub[0] = init_velocity
-    v_lb[-1] = v_ub[-1] = goal_velocity
+    v_lb[0] = v_ub[0] = self.init_velocity
+    v_lb[-1] = v_ub[-1] = self.goal_velocity
 
     z_lb = np.concatenate((x_lb, v_lb))
     z_ub = np.concatenate((x_ub, v_ub))
@@ -71,21 +70,27 @@ class InverseDynamicsCollocation():
     self.print_summary(res)
     return res
 
+  def reset_env(self):
+    self.env.state[0] = self.init_position
+    self.env.state[1] = self.init_velocity
+
   def print_summary(self, res):
     print("Status: {0}\n Message: {1}".format(res.status, res.message))
     z_opt = res.x
     x_opt, v_opt = np.split(z_opt, 2)
     u_opt = self.get_actions(z_opt)
+
     print("Positions: {0}\n Velocities: {1}\n Actions: {2}".format(x_opt, v_opt, u_opt))
-    input("Press any key to watch simulation...")
-    simulate(self.env, self.t, u_opt, './log/inverse_final.gif')
+    self.reset_env()
+    simulate(self.env, u_opt, './log/inverse_final.gif')
 
   def optim_callback_trust_constr(self, z, state):
     self.optim_iter += 1
     print("Iteration " + str(self.optim_iter) + ": " + str(state.constr_violation))
     if self.optim_iter % 50 == 0:
       np.save('./log/inverse_action' + str(self.optim_iter) + '.npy', z[-self.t:])
-      total_reward = simulate(self.env, self.t, actions=z[-self.t:])
+      self.reset_env()
+      total_reward = simulate(self.env, actions=z[-self.t:])
       return total_reward >= 100
     return False
 
