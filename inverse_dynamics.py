@@ -85,7 +85,7 @@ class InverseDynamicsCollocation():
     print("Iteration " + str(self.optim_iter) + ": " + str(state.constr_violation))
     if self.optim_iter % 50 == 0:
       np.save('./log/inverse_action' + str(self.optim_iter) + '.npy', z[-self.t:])
-      total_reward = simulate(self.env, self.t, z[-self.t:], './log/inverse_' + str(self.optim_iter) + '.gif')
+      total_reward = simulate(self.env, self.t, actions=z[-self.t:])
       return total_reward >= 100
     return False
 

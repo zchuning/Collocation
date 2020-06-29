@@ -114,7 +114,7 @@ class DirectCollocation():
     print("Iteration " + str(self.optim_iter) + ": " + str(state.constr_violation))
     if self.optim_iter % 50 == 0:
       np.save('./log/direct_action' + str(self.optim_iter) + '.npy', z[-self.t:])
-      total_reward = simulate(self.env, self.t, z[-self.t:], './log/direct_' + str(self.optim_iter) + '.gif')
+      total_reward = simulate(self.env, self.t, actions=z[-self.t:])
       return total_reward >= 100
     return False
 
@@ -123,7 +123,7 @@ class DirectCollocation():
     print("Iteration " + str(self.optim_iter))
     if self.optim_iter % 50 == 0:
       np.save('./log/direct_action' + str(self.optim_iter) + '.npy', z[-self.t:])
-      simulate(self.env, self.t, z[-self.t:], './log/direct_' + str(self.optim_iter) + '.gif')
+      simulate(self.env, self.t, actions=z[-self.t:])
 
 if __name__ == '__main__':
   Path("./log").mkdir(parents=True, exist_ok=True)
