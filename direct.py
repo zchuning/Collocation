@@ -15,7 +15,7 @@ class DirectCollocation():
     self.init_position = self.env.state[0]
     self.init_velocity = self.env.state[1]
     self.goal_position = self.env.goal_position
-    self.goal_velocity = 0
+    self.goal_velocity = self.env.goal_velocity
     print("Initial position: {0}. Initial velocity: {1}".format(self.init_position, self.init_velocity))
 
   def guess(self):

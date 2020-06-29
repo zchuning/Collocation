@@ -15,7 +15,7 @@ class InverseDynamicsCollocation():
     self.init_position = self.env.state[0]
     self.init_velocity = self.env.state[1]
     self.goal_position = self.env.goal_position
-    self.goal_velocity = 0
+    self.goal_velocity = self.env.goal_velocity
     print("Initial position: {0}. Initial velocity: {1}".format(self.init_position, self.init_velocity))
 
   def guess(self):
@@ -79,7 +79,6 @@ class InverseDynamicsCollocation():
     z_opt = res.x
     x_opt, v_opt = np.split(z_opt, 2)
     u_opt = self.get_actions(z_opt)
-
     print("Positions: {0}\n Velocities: {1}\n Actions: {2}".format(x_opt, v_opt, u_opt))
     self.reset_env()
     simulate(self.env, u_opt, './log/inverse_final.gif')
@@ -98,6 +97,6 @@ if __name__ == '__main__':
   Path("./log").mkdir(parents=True, exist_ok=True)
   env = gym.make('MountainCarContinuous-v0')
   env.reset()
-  colloc = InverseDynamicsCollocation(env, 150)
+  colloc = InverseDynamicsCollocation(env, 200)
   colloc.solve()
   env.close()
