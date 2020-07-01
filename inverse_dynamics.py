@@ -35,7 +35,7 @@ class InverseDynamicsCollocation():
 
   def dynamics_constraint(self):
     position_constraint_mat = np.concatenate((-np.eye(self.t) + np.eye(self.t, k=1), \
-                                              -np.eye(self.t)), 1)[:-1]
+                                              -np.eye(self.t, k=1)), 1)[:-1]
     position_constraint = LinearConstraint(position_constraint_mat, 0, 0)
     velocity_constraint = NonlinearConstraint(self.get_actions, self.env.min_action, self.env.max_action)
     return [position_constraint, velocity_constraint]
@@ -87,16 +87,15 @@ class InverseDynamicsCollocation():
     self.optim_iter += 1
     print("Iteration " + str(self.optim_iter) + ": " + str(state.constr_violation))
     if self.optim_iter % 50 == 0:
-      np.save('./log/inverse_action' + str(self.optim_iter) + '.npy', z[-self.t:])
       self.reset_env()
-      total_reward = simulate(self.env, actions=z[-self.t:])
-      return total_reward >= 100
+      total_reward = simulate(self.env, actions=self.get_actions(z))
+      return total_reward > 0
     return False
 
 if __name__ == '__main__':
   Path("./log").mkdir(parents=True, exist_ok=True)
   env = gym.make('MountainCarContinuous-v0')
   env.reset()
-  colloc = InverseDynamicsCollocation(env, 200)
+  colloc = InverseDynamicsCollocation(env, 100)
   colloc.solve()
   env.close()

@@ -11,6 +11,8 @@ def simulate(env, actions=None, path=None):
     action = env.action_space.sample() if actions is None else [actions[i]]
     obs, reward, done, _ = env.step(action)
     total_reward += reward
+    if done:
+      break
 
   if not (path is None):
     imageio.mimsave(path, frames, fps=60)

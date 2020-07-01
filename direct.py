@@ -34,28 +34,28 @@ class DirectCollocation():
     x, v, u = np.split(z, 3)
     # Displacement is equal to velocity
     dx = x[1:] - x[:-1]
-    position_constraint = dx - v[:-1]
+    position_constraint = dx - v[1:]
     # Acceleration is equal to force (unit mass)
     dv = v[1:] - v[:-1]
-    force = u[:-1] * self.env.power + 0.0025 * np.cos(3 * x[:-1])
+    force = u[:-1] * self.env.power - 0.0025 * np.cos(3 * x[:-1])
     velocity_constraint = dv - force
     return np.concatenate((position_constraint, velocity_constraint))
 
   def velocity_constraint(self, z):
     x, v, u = np.split(z, 3)
     dv = v[1:] - v[:-1]
-    force = u[:-1] * self.env.power + 0.0025 * np.cos(3 * x[:-1])
+    force = u[:-1] * self.env.power - 0.0025 * np.cos(3 * x[:-1])
     return dv - force
 
   def dynamics_constraint_alt(self):
     position_constraint_mat = np.concatenate((-np.eye(self.t) + np.eye(self.t, k=1), \
-                                              -np.eye(self.t), \
+                                              -np.eye(self.t, k=1), \
                                                np.zeros((self.t, self.t))), 1)[:-1]
     position_constraint = LinearConstraint(position_constraint_mat, 0, 0)
     velocity_constraint = NonlinearConstraint(self.velocity_constraint, 0, 0)
     return [position_constraint, velocity_constraint]
 
-  def solve(self, method):
+  def solve(self):
     # Guess initial values of decision variables
     z0 = self.guess()
 
@@ -83,17 +83,8 @@ class DirectCollocation():
 
     # Optimize
     print("Start optimization")
-    res = None
-    if method == 'SLSQP':
-      res = minimize(self.objective, z0, method='SLSQP', bounds=z_bounds, \
-                     constraints=[{'type': 'eq', 'fun':self.dynamics_constraint}], \
-                     callback=self.optim_callback_slsqp)
-    elif method == 'trust-constr':
-      res = minimize(self.objective, z0, method='trust-constr', bounds=z_bounds, \
-                     constraints=dyn_constr, callback=self.optim_callback_trust_constr)
-    else:
-      print("Unsupported optimization method")
-      return res
+    res = minimize(self.objective, z0, method='trust-constr', bounds=z_bounds, \
+                   constraints=dyn_constr, callback=self.optim_callback_trust_constr)
     print("Optimization terminated")
     self.print_summary(res)
     return res
@@ -106,8 +97,6 @@ class DirectCollocation():
     print("Status: {0}\n Message: {1}".format(res.status, res.message))
     z_opt = res.x
     x_opt, v_opt, u_opt = np.split(z_opt, 3)
-    print(x_opt[1:] - x_opt[:-1] - v_opt[:-1])
-    print(v_opt[1:] - v_opt[:-1] - (u_opt[:-1] * self.env.power - 0.0025 * np.cos(3 * x_opt[:-1])))
     print("Positions: {0}\n Velocities: {1}\n Actions: {2}".format(x_opt, v_opt, u_opt))
     self.reset_env()
     simulate(self.env, u_opt, "./log/direct_final.gif")
@@ -116,24 +105,15 @@ class DirectCollocation():
     self.optim_iter += 1
     print("Iteration " + str(self.optim_iter) + ": " + str(state.constr_violation))
     if self.optim_iter % 50 == 0:
-      np.save('./log/direct_action' + str(self.optim_iter) + '.npy', z[-self.t:])
       self.reset_env()
       total_reward = simulate(self.env, actions=z[-self.t:])
-      return total_reward >= 100
+      return total_reward > 0
     return False
-
-  def optim_callback_slsqp(self, z):
-    self.optim_iter += 1
-    print("Iteration " + str(self.optim_iter))
-    if self.optim_iter % 50 == 0:
-      np.save('./log/direct_action' + str(self.optim_iter) + '.npy', z[-self.t:])
-      self.reset_env()
-      simulate(self.env, actions=z[-self.t:])
 
 if __name__ == '__main__':
   Path("./log").mkdir(parents=True, exist_ok=True)
   env = gym.make('MountainCarContinuous-v0')
   env.reset()
-  colloc = DirectCollocation(env, 150)
-  colloc.solve('trust-constr')
+  colloc = DirectCollocation(env, 100)
+  colloc.solve()
   env.close()
