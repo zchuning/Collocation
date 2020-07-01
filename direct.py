@@ -29,6 +29,14 @@ class DirectCollocation():
     # Minimize total force applied
     return np.sum(np.square(z[-self.t:]))
 
+  def grad(self, z):
+    grad = np.concatenate((np.zeros(2 * self.t), 2 * z[-self.t:]))
+    return grad
+
+  def hess(self, z):
+    grad = np.concatenate((np.zeros(2 * self.t), 2 * np.ones(self.t)))
+    return grad
+
   def dynamics_constraint(self, z):
     # Dynamics: v += u * self.env.power - 0.0025 * math.cos(3 * x); x += v
     x, v, u = np.split(z, 3)
@@ -83,8 +91,11 @@ class DirectCollocation():
 
     # Optimize
     print("Start optimization")
-    res = minimize(self.objective, z0, method='trust-constr', bounds=z_bounds, \
-                   constraints=dyn_constr, callback=self.optim_callback)
+    res = minimize(self.objective, z0, method='trust-constr', jac=self.grad, \
+                   hess=self.hess, bounds=z_bounds, constraints=dyn_constr, \
+                   callback=self.optim_callback)
+    # res = minimize(self.objective, z0, method='trust-constr', bounds=z_bounds, \
+    #                constraints=dyn_constr, callback=self.optim_callback)
     print("Optimization terminated")
     self.print_summary(res)
     return res
@@ -106,7 +117,7 @@ class DirectCollocation():
     print("Iter " + str(self.optim_iter) + \
           "\t obj=" + str(self.objective(z)) + \
           "\t constr=" + str(state.constr_violation))
-    if self.optim_iter % 50 == 0:
+    if self.optim_iter % 10 == 0:
       self.reset_env()
       total_reward = simulate(self.env, actions=z[-self.t:])
       return total_reward > 0

@@ -88,7 +88,7 @@ class InverseDynamicsCollocation():
     print("Iter " + str(self.optim_iter) + \
           "\t obj=" + str(self.objective(z)) + \
           "\t constr=" + str(state.constr_violation))
-    if self.optim_iter % 50 == 0:
+    if self.optim_iter % 10 == 0:
       self.reset_env()
       total_reward = simulate(self.env, actions=self.get_actions(z))
       return total_reward > 0
