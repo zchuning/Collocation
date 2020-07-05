@@ -1,0 +1,221 @@
+import atexit
+import functools
+import sys
+import threading
+import traceback
+
+import gym
+import numpy as np
+from PIL import Image
+
+class MetaWorld:
+
+  LOCK = threading.Lock()
+
+  def __init__(self, name, action_repeat):
+    from mujoco_py import MjRenderContext
+    from metaworld.envs.mujoco.sawyer_xyz import SawyerReachPushPickPlaceEnv
+    with self.LOCK:
+      self._env = SawyerReachPushPickPlaceEnv(task_type='reach')
+
+    self._action_repeat = action_repeat
+    self._width = 64
+    self._size = (self._width, self._width)
+
+    self._offscreen = MjRenderContext(self._env.sim, True, 0, 'glfw', True)
+    self._offscreen.cam.azimuth =  205
+    self._offscreen.cam.elevation = -165
+    self._offscreen.cam.distance = 2.6
+    self._offscreen.cam.lookat[0] = 1.1
+    self._offscreen.cam.lookat[1] = 1.1
+    self._offscreen.cam.lookat[2] = -0.1
+
+  @property
+  def observation_space(self):
+    shape = self._size + (3,)
+    space = gym.spaces.Box(low=0, high=255, shape=shape, dtype=np.uint8)
+    return gym.spaces.Dict({'image': space})
+
+  @property
+  def action_space(self):
+    return self._env.action_space
+
+  def close(self):
+    return self._env.close()
+
+  def reset(self):
+    with self.LOCK:
+      self._env.reset()
+    return self._get_obs()
+
+  def step(self, action):
+    total_reward = 0.0
+    for step in range(self._action_repeat):
+      _, reward, done, info = self._env.step(action)
+      total_reward += min(reward, 100000)
+      if done:
+        break
+    obs = self._get_obs()
+    return obs, total_reward, done, info
+
+  def render(self, mode):
+    return self._env.render(mode)
+
+  def _get_obs(self):
+    self._offscreen.render(self._width, self._width, -1)
+    image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
+    return {'image': image}
+
+
+class DeepMindControl:
+
+  def __init__(self, name, size=(64, 64), camera=None):
+    domain, task = name.split('_', 1)
+    if domain == 'cup':  # Only domain with multiple words.
+      domain = 'ball_in_cup'
+    if isinstance(domain, str):
+      from dm_control import suite
+      self._env = suite.load(domain, task)
+    else:
+      assert task is None
+      self._env = domain()
+    self._size = size
+    if camera is None:
+      camera = dict(quadruped=2).get(domain, 0)
+    self._camera = camera
+
+  @property
+  def observation_space(self):
+    spaces = {}
+    for key, value in self._env.observation_spec().items():
+      spaces[key] = gym.spaces.Box(
+          -np.inf, np.inf, value.shape, dtype=np.float32)
+    spaces['image'] = gym.spaces.Box(
+        0, 255, self._size + (3,), dtype=np.uint8)
+    return gym.spaces.Dict(spaces)
+
+  @property
+  def action_space(self):
+    spec = self._env.action_spec()
+    return gym.spaces.Box(spec.minimum, spec.maximum, dtype=np.float32)
+
+  def step(self, action):
+    time_step = self._env.step(action)
+    obs = dict(time_step.observation)
+    obs['image'] = self.render()
+    reward = time_step.reward or 0
+    done = time_step.last()
+    info = {'discount': np.array(time_step.discount, np.float32)}
+    return obs, reward, done, info
+
+  def reset(self):
+    time_step = self._env.reset()
+    obs = dict(time_step.observation)
+    obs['image'] = self.render()
+    return obs
+
+  def render(self, *args, **kwargs):
+    if kwargs.get('mode', 'rgb_array') != 'rgb_array':
+      raise ValueError("Only render mode 'rgb_array' is supported.")
+    return self._env.physics.render(*self._size, camera_id=self._camera)
+
+
+class Collect:
+
+  def __init__(self, env, callbacks=None, precision=32):
+    self._env = env
+    self._callbacks = callbacks or ()
+    self._precision = precision
+    self._episode = None
+
+  def __getattr__(self, name):
+    return getattr(self._env, name)
+
+  def step(self, action):
+    obs, reward, done, info = self._env.step(action)
+    obs = {k: self._convert(v) for k, v in obs.items()}
+    transition = obs.copy()
+    transition['action'] = action
+    transition['reward'] = reward
+    transition['discount'] = info.get('discount', np.array(1 - float(done)))
+    self._episode.append(transition)
+    if done:
+      episode = {k: [t[k] for t in self._episode] for k in self._episode[0]}
+      episode = {k: self._convert(v) for k, v in episode.items()}
+      info['episode'] = episode
+      for callback in self._callbacks:
+        callback(episode)
+    return obs, reward, done, info
+
+  def reset(self):
+    obs = self._env.reset()
+    transition = obs.copy()
+    transition['action'] = np.zeros(self._env.action_space.shape)
+    transition['reward'] = 0.0
+    transition['discount'] = 1.0
+    self._episode = [transition]
+    return obs
+
+  def _convert(self, value):
+    value = np.array(value)
+    if np.issubdtype(value.dtype, np.floating):
+      dtype = {16: np.float16, 32: np.float32, 64: np.float64}[self._precision]
+    elif np.issubdtype(value.dtype, np.signedinteger):
+      dtype = {16: np.int16, 32: np.int32, 64: np.int64}[self._precision]
+    elif np.issubdtype(value.dtype, np.uint8):
+      dtype = np.uint8
+    else:
+      raise NotImplementedError(value.dtype)
+    return value.astype(dtype)
+
+
+class TimeLimit:
+
+  def __init__(self, env, duration):
+    self._env = env
+    self._duration = duration
+    self._step = None
+
+  def __getattr__(self, name):
+    return getattr(self._env, name)
+
+  def step(self, action):
+    assert self._step is not None, 'Must reset environment.'
+    obs, reward, done, info = self._env.step(action)
+    self._step += 1
+    if self._step >= self._duration:
+      done = True
+      if 'discount' not in info:
+        info['discount'] = np.array(1.0).astype(np.float32)
+      self._step = None
+    return obs, reward, done, info
+
+  def reset(self):
+    self._step = 0
+    return self._env.reset()
+
+
+class RewardObs:
+
+  def __init__(self, env):
+    self._env = env
+
+  def __getattr__(self, name):
+    return getattr(self._env, name)
+
+  @property
+  def observation_space(self):
+    spaces = self._env.observation_space.spaces
+    assert 'reward' not in spaces
+    spaces['reward'] = gym.spaces.Box(-np.inf, np.inf, dtype=np.float32)
+    return gym.spaces.Dict(spaces)
+
+  def step(self, action):
+    obs, reward, done, info = self._env.step(action)
+    obs['reward'] = reward
+    return obs, reward, done, info
+
+  def reset(self):
+    obs = self._env.reset()
+    obs['reward'] = 0.0
+    return obs
