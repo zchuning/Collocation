@@ -1,7 +1,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info
-./dist
-./logdir
-./plots
+dist/
+logdir/
+plots/
 MUJOCO_LOG.TXT

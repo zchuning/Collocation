@@ -2,10 +2,12 @@ import argparse
 import collections
 import functools
 import json
+import imageio
 import os
 import pathlib
 import sys
 import time
+
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
@@ -127,6 +129,63 @@ class Dreamer(tools.Module):
     if training:
       self._step.assign_add(len(reset) * self._c.action_repeat)
     return action, state
+
+  def collocation(self, obs, horizon=10, batch_size=50, elite_ratio=0.2):
+    elite_size = int(batch_size * elite_ratio)
+    feat_size = self._c.stoch_size + self._c.deter_size
+    var_len = (self._actdim + feat_size) * horizon
+
+    # Get initial hidden states
+    latent = self._dynamics.initial(len(obs['image']))
+    action = tf.zeros((len(obs['image']), self._actdim), self._float)
+    embedding = self._encode(preprocess(obs, self._c))
+    latent, _ = self._dynamics.obs_step(latent, action, embedding)
+    init_feat = self._dynamics.get_feat(latent)
+
+    # Sample trajectory
+    cem_steps = 10
+    means = tf.zeros(var_len, dtype=self._float)
+    stds = tf.ones(var_len, dtype=self._float)
+
+    def fitness(t):
+      # Get actions and features
+      t = tf.reshape(t, [horizon, -1])
+      actions = t[:, :self._actdim]
+      feats = tf.concat([init_feat, t[:, self._actdim:]], axis=0)
+      # Compute reward
+      reward = tf.reduce_sum(self._reward(feats).mode())
+      # Compute log probability
+      log_prob = 0
+      for i in range(actions.shape[0]):
+        state = {'stoch':tf.reshape(feats[i, :self._c.stoch_size], [1, 1, -1]),
+                 'deter':tf.reshape(feats[i, self._c.stoch_size:], [1, 1, -1])}
+        action = tf.reshape(actions[i], [1, 1, -1])
+        prior = self._dynamics.img_step(state, action)
+        # dist = tfd.MultivariateNormalDiag(tf.squeeze(prior['mean']), tf.squeeze(prior['std']))
+        # log_prob = dist.log_prob(feats[i + 1, :self._c.stoch_size])
+        next_means = tf.squeeze(tf.concat([prior['mean'], prior['deter']], axis=-1))
+        log_prob = -tf.reduce_sum(tf.square(next_means - feats[i + 1]))
+      fitness = reward + log_prob
+      return fitness
+
+    print("Running CEM")
+    # Plan a single step
+    # for i in range(cem_steps):
+    # print("Step {0} / {1}".format(i + 1, cem_steps))
+    # Sample from distribution (a1, s1, a2, s2, ..., ah, sh)
+    samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch_size])
+    # Evaluate fitness scores
+    fitness = tf.vectorized_map(fitness, samples)
+    # Get elite samples
+    elite_inds = tf.argsort(fitness)[-elite_size:]
+    elite_samples = tf.gather(samples, elite_inds)
+    # Refit distribution
+    means = tf.reduce_mean(elite_samples, axis=0)
+    stds = tf.math.reduce_std(elite_samples, axis=0)
+
+    # Get the first action
+    best_action = means[:self._actdim]
+    return best_action
 
   @tf.function
   def policy(self, obs, state, training):
@@ -372,7 +431,36 @@ def summarize_episode(episode, config, datadir, writer, prefix):
     if prefix == 'test':
       tools.video_summary(f'sim/{prefix}/video', episode['image'][None])
 
+
+def simulate_env(env, actions, path='./out.gif'):
+  env.reset()
+  total_reward = 0
+  frames = []
+  for i in range(len(actions)):
+    if not (path is None):
+      frames.append(env.render(mode='rgb_array'))
+    action = env.action_space.sample() if actions is None else [actions[i]]
+    obs, reward, done, _ = env.step(action)
+    total_reward += reward
+    if done:
+      break
+  # if not (path is None):
+  #   imageio.mimsave(path, frames, fps=60)
+  print("Total reward: " + str(total_reward))
+  return total_reward
+
+
 def main(config):
+  if config.gpu_growth:
+    for gpu in tf.config.experimental.list_physical_devices('GPU'):
+      tf.config.experimental.set_memory_growth(gpu, True)
+  assert config.precision in (16, 32), config.precision
+  if config.precision == 16:
+    prec.set_policy(prec.Policy('mixed_float16'))
+  config.steps = int(config.steps)
+  config.logdir.mkdir(parents=True, exist_ok=True)
+  print('Logdir', config.logdir)
+
   # Create environment.
   task = 'Sawyer_SawyerReachEnv'
   datadir = config.logdir / 'episodes'
@@ -381,20 +469,25 @@ def main(config):
   writer.set_as_default()
   env = wrappers.MetaWorld(task, config.action_repeat)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
-  callbacks = [lambda ep: summarize_episode(ep, config, datadir, writer, prefix)]
+  callbacks = [lambda ep: summarize_episode(ep, config, datadir, writer, 'test')]
   env = wrappers.Collect(env, callbacks, config.precision)
   env = wrappers.RewardObs(env)
+  obs = env.reset()
+  obs['image'] = [obs['image']]
 
   # Create agent.
   actspace = env.action_space
   agent = Dreamer(config, datadir, actspace, writer)
   agent.load(config.logdir / 'variables.pkl')
 
-
   # Run planning loop
-  # Sample from hidden states and action space
-
-
+  actions = []
+  for i in range(config.time_limit):
+    print("Planning step " + str(i))
+    action = agent.collocation(obs)
+    obs, _, _, _ = env.step(action)
+    obs['image'] = [obs['image']]
+  simulate_env(env, actions)
 
 if __name__ == '__main__':
   try:
