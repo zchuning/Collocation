@@ -147,7 +147,7 @@ class Dreamer(tools.Module):
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
 
-    def fitness(t):
+    def eval_fitness(t):
       # Get actions and features
       t = tf.reshape(t, [horizon, -1])
       actions = t[:, :self._actdim]
@@ -155,33 +155,28 @@ class Dreamer(tools.Module):
       # Compute reward
       reward = tf.reduce_sum(self._reward(feats).mode())
       # Compute log probability
-      log_prob = 0
-      for i in range(actions.shape[0]):
-        state = {'stoch':tf.reshape(feats[i, :self._c.stoch_size], [1, 1, -1]),
-                 'deter':tf.reshape(feats[i, self._c.stoch_size:], [1, 1, -1])}
-        action = tf.reshape(actions[i], [1, 1, -1])
-        prior = self._dynamics.img_step(state, action)
-        # dist = tfd.MultivariateNormalDiag(tf.squeeze(prior['mean']), tf.squeeze(prior['std']))
-        # log_prob = dist.log_prob(feats[i + 1, :self._c.stoch_size])
-        next_means = tf.squeeze(tf.concat([prior['mean'], prior['deter']], axis=-1))
-        log_prob = -tf.reduce_sum(tf.square(next_means - feats[i + 1]))
+      states = {'stoch':tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
+                'deter':tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
+      actions = tf.expand_dims(actions, 0)
+      prior = self._dynamics.img_step(states, actions)
+      next_means = tf.squeeze(tf.concat([prior['mean'], prior['deter']], axis=-1))
+      log_prob = -tf.reduce_sum(tf.square(next_means - feats[1:]))
       fitness = reward + log_prob
       return fitness
 
-    print("Running CEM")
     # Plan a single step
-    # for i in range(cem_steps):
-    # print("Step {0} / {1}".format(i + 1, cem_steps))
-    # Sample from distribution (a1, s1, a2, s2, ..., ah, sh)
-    samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch_size])
-    # Evaluate fitness scores
-    fitness = tf.vectorized_map(fitness, samples)
-    # Get elite samples
-    elite_inds = tf.argsort(fitness)[-elite_size:]
-    elite_samples = tf.gather(samples, elite_inds)
-    # Refit distribution
-    means = tf.reduce_mean(elite_samples, axis=0)
-    stds = tf.math.reduce_std(elite_samples, axis=0)
+    for i in range(cem_steps):
+      print("CEM step {0} of {1}".format(i + 1, cem_steps))
+      # Sample from distribution (a1, s1, a2, s2, ..., ah, sh)
+      samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch_size])
+      # Evaluate fitness scores
+      fitness = tf.vectorized_map(eval_fitness, samples)
+      # Get elite samples
+      elite_inds = tf.argsort(fitness)[-elite_size:]
+      elite_samples = tf.gather(samples, elite_inds)
+      # Refit distribution
+      means = tf.reduce_mean(elite_samples, axis=0)
+      stds = tf.math.reduce_std(elite_samples, axis=0)
 
     # Get the first action
     best_action = means[:self._actdim]
@@ -433,19 +428,16 @@ def summarize_episode(episode, config, datadir, writer, prefix):
 
 
 def simulate_env(env, actions, path='./out.gif'):
-  env.reset()
+  obs = env.reset()
   total_reward = 0
-  frames = []
+  frames = [obs['image']]
   for i in range(len(actions)):
-    if not (path is None):
-      frames.append(env.render(mode='rgb_array'))
-    action = env.action_space.sample() if actions is None else [actions[i]]
-    obs, reward, done, _ = env.step(action)
+    obs, reward, done, _ = env.step(actions[i])
     total_reward += reward
+    frames.append(obs['image'])
     if done:
       break
-  # if not (path is None):
-  #   imageio.mimsave(path, frames, fps=60)
+  imageio.mimsave(path, frames, fps=60)
   print("Total reward: " + str(total_reward))
   return total_reward
 
@@ -469,8 +461,6 @@ def main(config):
   writer.set_as_default()
   env = wrappers.MetaWorld(task, config.action_repeat)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
-  callbacks = [lambda ep: summarize_episode(ep, config, datadir, writer, 'test')]
-  env = wrappers.Collect(env, callbacks, config.precision)
   env = wrappers.RewardObs(env)
   obs = env.reset()
   obs['image'] = [obs['image']]
@@ -483,10 +473,13 @@ def main(config):
   # Run planning loop
   actions = []
   for i in range(config.time_limit):
-    print("Planning step " + str(i))
-    action = agent.collocation(obs)
-    obs, _, _, _ = env.step(action)
+    print("Planning step {0} of {1}".format(i + 1, config.time_limit))
+    action = agent.collocation(obs).numpy()
+    actions.append(action)
+    obs, reward, done, _ = env.step(action)
     obs['image'] = [obs['image']]
+    if done:
+      break
   simulate_env(env, actions)
 
 if __name__ == '__main__':

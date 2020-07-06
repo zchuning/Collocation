@@ -1088,5 +1088,3 @@
 {"step": 140700, "train/return": Infinity, "train/length": 150, "episodes": 938}
 {"step": 140850, "train/return": Infinity, "train/length": 150, "episodes": 939}
 {"step": 141000, "train/return": Infinity, "train/length": 150, "episodes": 940}
-{"step": 141000, "test/return": 13792.0, "test/length": 150, "episodes": 940}
-{"step": 141000, "test/return": 17712.0, "test/length": 150, "episodes": 940}
