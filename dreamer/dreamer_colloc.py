@@ -82,6 +82,11 @@ def define_config():
   config.expl_amount = 0.3
   config.expl_decay = 0.0
   config.expl_min = 0.0
+  # Collocation.
+  config.cem_steps = 10
+  config.cem_horizon = 100
+  config.cem_batch_size = 50
+  config.mpc_steps = 10
   return config
 
 
@@ -130,7 +135,8 @@ class Dreamer(tools.Module):
       self._step.assign_add(len(reset) * self._c.action_repeat)
     return action, state
 
-  def collocation(self, obs, horizon=10, batch_size=50, elite_ratio=0.2):
+  def collocation(self, obs, horizon=100, mpc_steps=10, cem_steps=10,
+                  batch_size=50, elite_ratio=0.1):
     elite_size = int(batch_size * elite_ratio)
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len = (self._actdim + feat_size) * horizon
@@ -143,7 +149,6 @@ class Dreamer(tools.Module):
     init_feat = self._dynamics.get_feat(latent)
 
     # Sample trajectory
-    cem_steps = 10
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
 
@@ -155,11 +160,11 @@ class Dreamer(tools.Module):
       # Compute reward
       reward = tf.reduce_sum(self._reward(feats).mode())
       # Compute log probability
-      states = {'stoch':tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
-                'deter':tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
+      states = {'stoch': tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
+                'deter': tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
       actions = tf.expand_dims(actions, 0)
-      prior = self._dynamics.img_step(states, actions)
-      next_means = tf.squeeze(tf.concat([prior['mean'], prior['deter']], axis=-1))
+      priors = self._dynamics.img_step(states, actions)
+      next_means = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
       log_prob = -tf.reduce_sum(tf.square(next_means - feats[1:]))
       fitness = reward + log_prob
       return fitness
@@ -179,8 +184,10 @@ class Dreamer(tools.Module):
       stds = tf.math.reduce_std(elite_samples, axis=0)
 
     # Get the first action
-    best_action = means[:self._actdim]
-    return best_action
+    means_pred = tf.reshape(means, [horizon, -1])
+    act_pred = means_pred[:min(horizon, mpc_steps), :self._actdim]
+    img_pred = self._decode(means_pred[:min(horizon, mpc_steps), self._actdim:]).mode()
+    return act_pred, img_pred
 
   @tf.function
   def policy(self, obs, state, training):
@@ -427,21 +434,6 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       tools.video_summary(f'sim/{prefix}/video', episode['image'][None])
 
 
-def simulate_env(env, actions, path='./out.gif'):
-  obs = env.reset()
-  total_reward = 0
-  frames = [obs['image']]
-  for i in range(len(actions)):
-    obs, reward, done, _ = env.step(actions[i])
-    total_reward += reward
-    frames.append(obs['image'])
-    if done:
-      break
-  imageio.mimsave(path, frames, fps=60)
-  print("Total reward: " + str(total_reward))
-  return total_reward
-
-
 def main(config):
   if config.gpu_growth:
     for gpu in tf.config.experimental.list_physical_devices('GPU'):
@@ -454,11 +446,7 @@ def main(config):
   print('Logdir', config.logdir)
 
   # Create environment.
-  task = 'Sawyer_SawyerReachEnv'
-  datadir = config.logdir / 'episodes'
-  writer = tf.summary.create_file_writer(
-      str(config.logdir), max_queue=1000, flush_millis=20000)
-  writer.set_as_default()
+  suite, task = config.task.split('_', 1)
   env = wrappers.MetaWorld(task, config.action_repeat)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   env = wrappers.RewardObs(env)
@@ -467,20 +455,41 @@ def main(config):
 
   # Create agent.
   actspace = env.action_space
+  datadir = config.logdir / 'episodes'
+  writer = tf.summary.create_file_writer(
+      str(config.logdir), max_queue=1000, flush_millis=20000)
+  writer.set_as_default()
   agent = Dreamer(config, datadir, actspace, writer)
   agent.load(config.logdir / 'variables.pkl')
 
   # Run planning loop
-  actions = []
-  for i in range(config.time_limit):
+  act_preds = []
+  img_preds = []
+  frames = [obs['image'][0]]
+  total_reward = 0
+  for i in range(0, config.time_limit, config.mpc_steps):
     print("Planning step {0} of {1}".format(i + 1, config.time_limit))
-    action = agent.collocation(obs).numpy()
-    actions.append(action)
-    obs, reward, done, _ = env.step(action)
+    act_pred, img_pred = agent.collocation(obs, horizon=config.cem_horizon,
+                                           cem_steps=config.cem_steps,
+                                           mpc_steps=config.mpc_steps,
+                                           batch_size=config.cem_batch_size)
+    act_pred = act_pred.numpy()
+    act_preds.append(act_pred)
+    img_preds.append(img_pred.numpy())
+    for j in range(len(act_pred)):
+      obs, reward, done, _ = env.step(act_pred[j])
+      total_reward += reward
+      frames.append(obs['image'])
     obs['image'] = [obs['image']]
     if done:
+      print("Done at time {0}".format(len(act_preds) * config.mpc_steps))
       break
-  simulate_env(env, actions)
+  act_preds = np.vstack(act_preds)
+  img_preds = np.vstack(img_preds)
+  imageio.mimsave("./preds.gif", img_preds, fps=60)
+  imageio.mimsave("./frames.gif", frames, fps=60)
+  print("Total reward: " + str(total_reward))
+
 
 if __name__ == '__main__':
   try:

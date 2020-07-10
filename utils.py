@@ -1,4 +1,3 @@
-import gym
 import imageio
 
 def simulate(env, actions=None, path=None):

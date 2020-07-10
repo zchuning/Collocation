@@ -14,6 +14,10 @@ class MetaWorld:
 
   def __init__(self, name, action_repeat):
     from mujoco_py import MjRenderContext
+    # import metaworld.envs.mujoco.sawyer_xyz as sawyer
+    # domain, task = name.split('_', 1)
+    # with self.LOCK:
+    #   self._env = getattr(sawyer, task)()
     from metaworld.envs.mujoco.sawyer_xyz import SawyerReachPushPickPlaceEnv
     with self.LOCK:
       self._env = SawyerReachPushPickPlaceEnv(task_type='reach')
@@ -23,7 +27,7 @@ class MetaWorld:
     self._size = (self._width, self._width)
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, 'glfw', True)
-    self._offscreen.cam.azimuth =  205
+    self._offscreen.cam.azimuth = 205
     self._offscreen.cam.elevation = -165
     self._offscreen.cam.distance = 2.6
     self._offscreen.cam.lookat[0] = 1.1

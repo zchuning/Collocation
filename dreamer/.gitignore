@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info
+*.gif
 dist/
 logdir/
 plots/
