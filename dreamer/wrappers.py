@@ -14,13 +14,13 @@ class MetaWorld:
 
   def __init__(self, name, action_repeat):
     from mujoco_py import MjRenderContext
-    # import metaworld.envs.mujoco.sawyer_xyz as sawyer
-    # domain, task = name.split('_', 1)
-    # with self.LOCK:
-    #   self._env = getattr(sawyer, task)()
-    from metaworld.envs.mujoco.sawyer_xyz import SawyerReachPushPickPlaceEnv
+    import metaworld.envs.mujoco.sawyer_xyz as sawyer
+    domain, task = name.split('_', 1)
     with self.LOCK:
-      self._env = SawyerReachPushPickPlaceEnv(task_type='reach')
+      if task == 'SawyerReachEnv':
+        self._env = sawyer.SawyerReachPushPickPlaceEnv(task_type='reach')
+      else:
+        self._env = getattr(sawyer, task)()
 
     self._action_repeat = action_repeat
     self._width = 64
