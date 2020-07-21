@@ -43,7 +43,7 @@ class RSSM(tools.Module):
     if state is None:
       state = self.initial(tf.shape(action)[0])
     assert isinstance(state, dict), state
-    action = tf.transpose(action, [1, 0, 2])
+    action = tf.transpose(action, [1, 0, 2]) # (100, 1, 4)
     prior = tools.static_scan(self.img_step, action, state)
     prior = {k: tf.transpose(v, [1, 0, 2]) for k, v in prior.items()}
     return prior

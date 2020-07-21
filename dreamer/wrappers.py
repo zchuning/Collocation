@@ -65,10 +65,22 @@ class MetaWorld:
   def render(self, mode):
     return self._env.render(mode)
 
+  def render_goal(self):
+    self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
+    self.reset()
+    action = np.zeros(self._env.action_space.low.shape)
+    self._env.step(action)
+    goal_obs = self._get_obs()
+    goal_obs['reward'] = 0.0
+    self._env.hand_init_pos = self._env.init_config['hand_init_pos']
+    self.reset()
+    return goal_obs
+
   def _get_obs(self):
     self._offscreen.render(self._width, self._width, -1)
     image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
     return {'image': image}
+
 
 
 class DeepMindControl:
