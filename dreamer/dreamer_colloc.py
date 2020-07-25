@@ -13,6 +13,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
 import numpy as np
+import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
 
@@ -84,12 +85,14 @@ def define_config():
   config.expl_min = 0.0
   # Collocation.
   config.planning_horizon = 5
+  config.lambda_int = 50
   config.mpc_steps = 5
   config.cem_steps = 60
   config.cem_batch_size = 10000
   config.cem_elite_ratio = 0.01
   config.gd_steps = 500
-  config.dyn_loss_scale = 10
+  config.dyn_loss_scale = 50
+  config.act_loss_scale = 5
   config.visualize = False
   return config
 
@@ -166,7 +169,7 @@ class Dreamer(tools.Module):
     imageio.imwrite("./colloc_imgs.jpg", colloc_imgs)
     imageio.mimsave("./model.gif", model_imgs, fps=60)
     imageio.imwrite("./model_imgs.jpg", model_imgs.reshape(-1, 64, 3))
-    # sys.exit()
+    sys.exit()
 
   def collocation_goal(self, init, goal, optim):
     horizon = self._c.planning_horizon
@@ -281,15 +284,21 @@ class Dreamer(tools.Module):
     # Initialize decision variables
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
-    t = tf.reshape(tfd.MultivariateNormalDiag(means, stds).sample(), [horizon, -1])
+    t = tf.Variable(tfd.MultivariateNormalDiag(means, stds).sample())
 
     dyn_loss, rewards = [], []
+    dyn_loss_frame = []
+    opt = tf.keras.optimizers.Adam(learning_rate=0.01)
+    lambdas = tf.ones(horizon)
+    nus = tf.ones([horizon, self._actdim])
+    # Gradietn descent loop
     for i in range(self._c.gd_steps):
       print("Gradient descent step {0}".format(i + 1))
       with tf.GradientTape() as g:
         g.watch(t)
-        actions = tf.expand_dims(t[:, :self._actdim], 0)
-        feats = tf.concat([init_feat, t[:, self._actdim:]], axis=0)
+        tr = tf.reshape(t, [horizon, -1])
+        actions = tf.expand_dims(tr[:, :self._actdim], 0)
+        feats = tf.concat([init_feat, tr[:, self._actdim:]], axis=0)
         # Compute reward
         reward = tf.reduce_sum(self._reward(feats).mode())
         # Compute dynamics loss
@@ -298,22 +307,44 @@ class Dreamer(tools.Module):
         states = {'stoch': stoch, 'deter': deter}
         priors = self._dynamics.img_step(states, actions)
         feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-        log_prob = -tf.reduce_sum(tf.square(feats_pred - feats[1:]))
-        print("Reward: {0}, dynamics: {1}".format(reward, log_prob))
-        fitness = reward + self._c.dyn_loss_scale * log_prob
-        grads = g.gradient(fitness, t)
-        t = t + 0.001 * grads
+        # imgs_pred = self._decode(tf.expand_dims(feats_pred, 0)).mode()[0]
+        # imgs = self._decode(tf.expand_dims(feats, 0)).mode()[0]
+        # log_prob_frame = tf.reduce_sum(tf.square(imgs_pred - imgs[1:]), axis=1)
+        log_prob_frame = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
+        log_prob = tf.reduce_sum(lambdas * log_prob_frame)
+        actions_constr = tf.reduce_sum(nus * tf.square(actions) - 1)
+        fitness = - reward + self._c.dyn_loss_scale * log_prob + self._c.act_loss_scale * actions_constr
 
-      dyn_loss.append(-log_prob)
-      rewards.append(reward)
+        print(f"Frame-wise log probability: {log_prob_frame}")
+        print(f"Reward: {reward}, dynamics: {log_prob}")
+        dyn_loss.append(tf.reduce_sum(log_prob_frame))
+        dyn_loss_frame.append(log_prob_frame)
+        rewards.append(reward)
+      grad = g.gradient(fitness, t)
+      opt.apply_gradients([(grad, t)])
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        lambdas += log_prob_frame
+        nus += tf.square(actions)
+        print(tf.reduce_mean(log_prob_frame, axis=0))
+        print(f"Lambdas: {lambdas}\n Nus: {nus}")
 
-    act_pred = t[:min(horizon, mpc_steps), :self._actdim]
-    img_pred = self._decode(t[:min(horizon, mpc_steps), self._actdim:]).mode()
+    if self._c.visualize:
+      dyn_loss_frame = np.array(dyn_loss_frame)
+      xs = range(self._c.gd_steps)
+      for i in range(dyn_loss_frame.shape[1]):
+        plt.plot(xs, dyn_loss_frame[:,i], label=str(i))
+      plt.legend()
+      plt.show()
+
+    tr = tf.reshape(t, [horizon, -1])
+    act_pred = tr[:min(horizon, mpc_steps), :self._actdim]
+    print(act_pred)
+    img_pred = self._decode(tr[:min(horizon, mpc_steps), self._actdim:]).mode()
     print("Final average dynamics loss: {0}".format(dyn_loss[-1] / horizon))
     print("Final average reward: {0}".format(rewards[-1] / horizon))
     if self._c.visualize:
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
-    return act_pred, img_pred
+    return act_pred, img_pred, rewards[-1] / horizon
 
   def collocation_cem(self, obs):
     horizon = self._c.planning_horizon
@@ -329,12 +360,7 @@ class Dreamer(tools.Module):
     latent, _ = self._dynamics.obs_step(latent, action, embedding)
     init_feat = self._dynamics.get_feat(latent)
 
-    # Sample trajectory
-    means = tf.zeros(var_len, dtype=self._float)
-    stds = tf.ones(var_len, dtype=self._float)
-
-    loss_weights = tf.convert_to_tensor([16.0, 8.0, 4.0, 2.0, 1.0])
-
+    lambdas = tf.ones(horizon)
     def eval_fitness(t):
       t = tf.reshape(t, [horizon, -1])
       actions = tf.expand_dims(t[:, :self._actdim], 0)
@@ -346,29 +372,18 @@ class Dreamer(tools.Module):
                 'deter': tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
       priors = self._dynamics.img_step(states, actions)
       feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-      log_prob = -tf.reduce_sum(tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1) * loss_weights)
+      # Unweighted log probability, used for updating lambdas
+      log_prob_frame = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
+      # Weighted log probability, used in fitness
+      log_prob_weighted = tf.reduce_sum(lambdas * log_prob_frame)
+      # log_prob = tf.reduce_sum(tf.square(feats_pred - feats[1:]))
+      fitness = - reward + self._c.dyn_loss_scale * log_prob_weighted
+      return fitness, reward, log_prob_frame
 
-      # Multi-step error
-      # init_feat_sq = tf.squeeze(init_feat)
-      # init_states = {'stoch': tf.reshape(init_feat_sq[:self._c.stoch_size], [1, -1]),
-      #                'deter': tf.reshape(init_feat_sq[self._c.stoch_size:], [1, -1]),
-      #                'mean': None, 'std': None}
-      # priors_multi = self._dynamics.imagine(actions, init_states)
-      # feats_multi = tf.squeeze(tf.concat([priors_multi['mean'], priors_multi['deter']], axis=-1))
-      # log_prob_multi = -tf.reduce_sum(tf.square(feats_multi - feats[1:]))
-
-      fitness = reward + self._c.dyn_loss_scale * log_prob # + self._c.dyn_loss_scale * log_prob_multi
-      return fitness, reward, log_prob
-
-    file_writer_0 = tf.summary.create_file_writer('./logs/weighted10/1')
-    file_writer_1 = tf.summary.create_file_writer('./logs/weighted10/2')
-    file_writer_2 = tf.summary.create_file_writer('./logs/weighted10/3')
-    file_writer_3 = tf.summary.create_file_writer('./logs/weighted10/4')
-    file_writer_4 = tf.summary.create_file_writer('./logs/weighted10/5')
-    def log_dyn_loss(t, step):
-      t = tf.reshape(t, [horizon, -1])
-      actions = tf.expand_dims(t[:, :self._actdim], 0)
-      feats = tf.concat([init_feat, t[:, self._actdim:]], axis=0)
+    def log_dyn_loss(t):
+      tr = tf.reshape(t, [horizon, -1])
+      actions = tf.expand_dims(tr[:, :self._actdim], 0)
+      feats = tf.concat([init_feat, tr[:, self._actdim:]], axis=0)
       # Compute dynamics loss
       states = {'stoch': tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
                 'deter': tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
@@ -376,34 +391,50 @@ class Dreamer(tools.Module):
       feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
       log_prob = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
       print(log_prob.numpy())
-      with file_writer_0.as_default():
-        tf.summary.scalar('Dynamics loss weighted 10', log_prob[0], step=step)
-      with file_writer_1.as_default():
-        tf.summary.scalar('Dynamics loss weighted 10', log_prob[1], step=step)
-      with file_writer_2.as_default():
-        tf.summary.scalar('Dynamics loss weighted 10', log_prob[2], step=step)
-      with file_writer_3.as_default():
-        tf.summary.scalar('Dynamics loss weighted 10', log_prob[3], step=step)
-      with file_writer_4.as_default():
-        tf.summary.scalar('Dynamics loss weighted 10', log_prob[4], step=step)
+      return log_prob
 
     # CEM loop:
     dyn_loss, rewards = [], []
+    log_probs = []
+    gamma = 0.00001
+    means = tf.zeros(var_len, dtype=self._float)
+    stds = tf.ones(var_len, dtype=self._float)
     for i in range(self._c.cem_steps):
       print("CEM step {0} of {1}".format(i + 1, self._c.cem_steps))
       # Sample trajectories and evaluate fitness
       samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[self._c.cem_batch_size])
-      fitness, rew, dyn = tf.vectorized_map(eval_fitness, samples)
+      fitness, rew, dyn_frame = tf.vectorized_map(eval_fitness, samples)
       rewards.append(tf.reduce_mean(rew).numpy())
-      dyn_loss.append(-tf.reduce_mean(dyn).numpy())
+      dyn_loss.append(tf.reduce_mean(tf.reduce_sum(dyn_frame, axis=1)).numpy())
       # Get elite samples
-      elite_inds = tf.argsort(fitness)[-elite_size:]
+      # elite_inds = tf.argsort(fitness)[-elite_size:]
+      elite_inds = tf.argsort(fitness)[:elite_size]
+      elite_dyn_frame = tf.gather(dyn_frame, elite_inds)
       elite_samples = tf.gather(samples, elite_inds)
       # Refit distribution
       means = tf.reduce_mean(elite_samples, axis=0)
       stds = tf.math.reduce_std(elite_samples, axis=0)
+      # MPPI
+      # elite_fitness = tf.gather(fitness, elite_inds)
+      # weights = tf.expand_dims(tf.nn.softmax(gamma * elite_fitness), axis=1)
+      # means = tf.reduce_sum(weights * elite_samples, axis=0)
+      # stds = tf.sqrt(tf.reduce_sum(weights * tf.square(elite_samples - means), axis=0))
+      # Lagrange multiplier
+      # Update lambdas at a slower rate
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        lambdas += tf.reduce_mean(elite_dyn_frame, axis=0)
+        print(tf.reduce_mean(dyn_frame, axis=0))
+        print(lambdas)
       if self._c.visualize:
-        log_dyn_loss(means, i)
+        log_probs.append(log_dyn_loss(means).numpy())
+
+    if self._c.visualize:
+      log_probs = np.array(log_probs)
+      xs = range(self._c.cem_steps)
+      for i in range(log_probs.shape[1]):
+        plt.plot(xs, log_probs[:,i], label=str(i))
+      plt.legend()
+      plt.show()
 
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps), :self._actdim]
@@ -694,18 +725,26 @@ def main(config):
   img_preds, act_preds = [], []
   frames = [obs['image'][0]]
   total_reward = 0
+  rewards_real = []
+  rewards_optim = []
   for i in range(0, config.time_limit, config.mpc_steps):
     print("Planning step {0} of {1}".format(i + 1, config.time_limit))
-    act_pred, img_pred = agent.collocation_cem(obs)
+    act_pred, img_pred, fin_rew = agent.collocation_gd(obs)
     act_pred = act_pred.numpy()
     act_preds.append(act_pred)
     img_preds.append(img_pred.numpy())
+    rewards_optim.append(fin_rew)
     for j in range(len(act_pred)):
       obs, reward, done, _ = env.step(act_pred[j])
       total_reward += reward
+      rewards_real.append(reward)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # break
+  plt.plot(range(config.time_limit), rewards_real, label="real")
+  plt.plot(range(0, config.time_limit, config.mpc_steps), rewards_optim, label="optim")
+  plt.legend()
+  plt.show()
   img_preds = np.vstack(img_preds)
   imageio.mimsave("./preds.gif", img_preds, fps=60)
   imageio.mimsave("./frames.gif", frames, fps=60)
