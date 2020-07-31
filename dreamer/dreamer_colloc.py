@@ -86,12 +86,12 @@ def define_config():
   # Planning
   config.planning_task = 'colloc_cem'
   config.planning_horizon = 10
-  config.lambda_int = 100
   config.mpc_steps = 10
   config.cem_steps = 60
   config.cem_batch_size = 10000
   config.cem_elite_ratio = 0.01
   config.gd_steps = 2000
+  config.lambda_int = 100
   config.dyn_loss_scale = 50
   config.act_loss_scale = 5
   config.visualize = False
@@ -709,9 +709,6 @@ def main(config):
   env = wrappers.RewardObs(env)
   obs = env.reset()
   obs['image'] = [obs['image']]
-  # Obtain goal observation for goal-based collocation
-  goal_obs = env.render_goal()
-  goal_obs['image'] = [goal_obs['image']]
 
   # Create agent.
   actspace = env.action_space
@@ -727,6 +724,11 @@ def main(config):
   is_shooting = pt == 'shooting'
   is_goal_based = (len(config.planning_task.split('_')) == 3)
 
+  # Obtain goal observation for goal-based collocation
+  if is_goal_based:
+    goal_obs = env.render_goal()
+    goal_obs['image'] = [goal_obs['image']]
+
   # Run planning loop
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
@@ -739,7 +741,7 @@ def main(config):
     elif pt == 'colloc_gd':
       act_pred, img_pred = agent.collocation_gd(obs)
     elif pt == 'colloc_gd_goal':
-      act_pred, img_pred = agent.collocation_goal(obs, 'goal_obs', 'gd')
+      act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting':
       act_pred = agent.shooting_cem(obs)
     else:
