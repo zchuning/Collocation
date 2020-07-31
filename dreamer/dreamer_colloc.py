@@ -83,7 +83,8 @@ def define_config():
   config.expl_amount = 0.3
   config.expl_decay = 0.0
   config.expl_min = 0.0
-  # Collocation.
+  # Planning
+  config.planning_task = 'colloc_cem' # colloc_gd, colloc_cem_goal, colloc_gd_goal, shooting
   config.planning_horizon = 5
   config.lambda_int = 50
   config.mpc_steps = 5
@@ -175,17 +176,14 @@ class Dreamer(tools.Module):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     feat_size = self._c.stoch_size + self._c.deter_size
-    elite_size = int(self._c.cem_batch_size * self._c.cem_elite_ratio)
     var_len = (self._actdim + feat_size) * horizon
 
     # Get initial states and goal states
     null_latent = self._dynamics.initial(len(init['image']))
     null_action = tf.zeros((len(init['image']), self._actdim), self._float)
-
     init_embedding = self._encode(preprocess(init, self._c))
     init_latent, _ = self._dynamics.obs_step(null_latent, null_action, init_embedding)
     init_feat = self._dynamics.get_feat(init_latent)
-
     goal_embedding = self._encode(preprocess(goal, self._c))
     goal_latent, _ = self._dynamics.obs_step(null_latent, null_action, goal_embedding)
     goal_feat = self._dynamics.get_feat(goal_latent)
@@ -194,7 +192,6 @@ class Dreamer(tools.Module):
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     dyn_loss, forces = [], []
-    img_pred, act_pred = None, None
 
     if optim == 'gd':
       opt = tf.keras.optimizers.Adam(learning_rate=0.01)
@@ -236,48 +233,15 @@ class Dreamer(tools.Module):
           print(f"Lambdas: {lambdas}\n Nus: {nus}")
       act_pred = actions
       img_pred = self._decode(feats_full[:min(horizon, mpc_steps)]).mode()
-    elif optim == 'cem':
-      def eval_fitness(t):
-        t = tf.reshape(t, [horizon, -1])
-        actions = tf.expand_dims(t[:, :self._actdim], 0)
-        force = tf.reduce_sum(tf.square(actions))
-        feats = tf.concat([init_feat, t[:-1, self._actdim:], goal_feat], axis=0)
-        # Compute dynamics loss
-        states = {'stoch': tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
-                  'deter': tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
-        priors = self._dynamics.img_step(states, actions)
-        feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-        log_prob = -tf.reduce_sum(tf.square(feats_pred - feats[1:]))
-        fitness = self._c.dyn_loss_scale * log_prob
-        return fitness, force, log_prob
-      # CEM loop
-      for i in range(self._c.cem_steps):
-        print("CEM step {0} of {1}".format(i + 1, self._c.cem_steps))
-        # Sample trajectories and evaluate fitness
-        samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[self._c.cem_batch_size])
-        fitness, force, dyn = tf.vectorized_map(eval_fitness, samples)
-        dyn_loss.append(-tf.reduce_mean(dyn).numpy())
-        forces.append(tf.reduce_mean(force).numpy())
-        # Get elite samples
-        elite_inds = tf.argsort(fitness)[-elite_size:]
-        elite_samples = tf.gather(samples, elite_inds)
-        # Refit distribution
-        means = tf.reduce_mean(elite_samples, axis=0)
-        stds = tf.math.reduce_std(elite_samples, axis=0)
-        print("Force: {0}, dynamics: {1}".format(forces[-1], dyn_loss[-1]))
-      means_pred = tf.reshape(means, [horizon, -1])
-      act_pred = means_pred[:min(horizon, mpc_steps), :self._actdim]
-      img_pred = self._decode(means_pred[:min(horizon, mpc_steps), self._actdim:]).mode()
     else:
-      print("Unsupported optimizer")
-      assert(False)
+      raise ValueError("Unsupported optimizer")
 
     print(act_pred)
     print("Final average dynamics loss: {0}".format(dyn_loss[-1] / horizon))
     print("Final average force: {0}".format(forces[-1] / horizon))
     if self._c.visualize:
       self.visualize_colloc(forces, dyn_loss, img_pred, act_pred, init_feat)
-    return act_pred, img_pred, forces[-1] / horizon
+    return act_pred, img_pred
 
   def collocation_gd(self, obs):
     horizon = self._c.planning_horizon
@@ -297,6 +261,7 @@ class Dreamer(tools.Module):
     stds = tf.ones(var_len, dtype=self._float)
     t = tf.Variable(tfd.MultivariateNormalDiag(means, stds).sample())
 
+    # Gradient descent parameters
     dyn_loss, rewards = [], []
     dyn_loss_frame = []
     opt = tf.keras.optimizers.Adam(learning_rate=0.01)
@@ -335,14 +300,6 @@ class Dreamer(tools.Module):
         print(tf.reduce_mean(log_prob_frame, axis=0))
         print(f"Lambdas: {lambdas}\n Nus: {nus}")
 
-    if self._c.visualize:
-      dyn_loss_frame = np.array(dyn_loss_frame)
-      xs = range(self._c.gd_steps)
-      for i in range(dyn_loss_frame.shape[1]):
-        plt.plot(xs, dyn_loss_frame[:,i], label=str(i))
-      plt.legend()
-      plt.show()
-
     tr = tf.reshape(t, [horizon, -1])
     act_pred = tr[:min(horizon, mpc_steps), :self._actdim]
     print(act_pred)
@@ -351,7 +308,7 @@ class Dreamer(tools.Module):
     print("Final average reward: {0}".format(rewards[-1] / horizon))
     if self._c.visualize:
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
-    return act_pred, img_pred, rewards[-1] / horizon
+    return act_pred, img_pred
 
   def collocation_cem(self, obs):
     horizon = self._c.planning_horizon
@@ -388,22 +345,8 @@ class Dreamer(tools.Module):
       fitness = - reward + self._c.dyn_loss_scale * log_prob_weighted
       return fitness, reward, log_prob_frame
 
-    def log_dyn_loss(t):
-      tr = tf.reshape(t, [horizon, -1])
-      actions = tf.expand_dims(tr[:, :self._actdim], 0)
-      feats = tf.concat([init_feat, tr[:, self._actdim:]], axis=0)
-      # Compute dynamics loss
-      states = {'stoch': tf.expand_dims(feats[:-1, :self._c.stoch_size], 0),
-                'deter': tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)}
-      priors = self._dynamics.img_step(states, actions)
-      feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-      log_prob = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
-      print(log_prob.numpy())
-      return log_prob
-
     # CEM loop:
     dyn_loss, rewards = [], []
-    log_probs = []
     gamma = 0.00001
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
@@ -434,7 +377,6 @@ class Dreamer(tools.Module):
         lambdas += tf.reduce_mean(elite_dyn_frame, axis=0)
         print(tf.reduce_mean(dyn_frame, axis=0))
         print(lambdas)
-      log_probs.append(log_dyn_loss(means).numpy())
 
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps), :self._actdim]
@@ -443,12 +385,6 @@ class Dreamer(tools.Module):
     print("Final average reward: {0}".format(rewards[-1] / horizon))
     if self._c.visualize:
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
-      log_probs = np.array(log_probs)
-      xs = range(self._c.cem_steps)
-      for i in range(log_probs.shape[1]):
-        plt.plot(xs, log_probs[:, i], label=str(i))
-      plt.legend()
-      plt.show()
     return act_pred, img_pred
 
   def shooting_cem(self, obs, min_action=-1, max_action=1):
@@ -501,7 +437,7 @@ class Dreamer(tools.Module):
       plt.plot(range(len(rewards)), rewards)
       plt.savefig('./lr.jpg')
       plt.show()
-    return act_pred, means, stds
+    return act_pred
 
   @tf.function
   def policy(self, obs, state, training):
@@ -768,14 +704,14 @@ def main(config):
   elif suite == 'mw':
     env = wrappers.MetaWorld(task, config.action_repeat)
   else:
-    print("Unspoorted environment")
-    assert(False)
+    raise ValueError("Unspoorted environment")
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   env = wrappers.RewardObs(env)
   obs = env.reset()
   obs['image'] = [obs['image']]
-  # goal_obs = env.render_goal()
-  # goal_obs['image'] = [goal_obs['image']]
+  # Obtain goal observation for goal-based collocation
+  goal_obs = env.render_goal()
+  goal_obs['image'] = [goal_obs['image']]
 
   # Create agent.
   actspace = env.action_space
@@ -786,53 +722,46 @@ def main(config):
   agent = Dreamer(config, datadir, actspace, writer)
   agent.load(config.logdir / 'variables.pkl')
 
+  # Define task-related variables
+  pt = config.planning_task
+  is_shooting = pt == 'shooting'
+  is_goal_based = (len(config.planning_task.split('_')) == 3)
+
+  # Run planning loop
   num_iter = config.time_limit // config.action_repeat
-  # Run collocation method
-  img_preds, act_preds = [], []
-  frames = [obs['image'][0]]
-  total_reward = 0
-  # rewards_real = []
-  # rewards_optim = []
-  for i in range(0, num_iter, config.mpc_steps):
-    print("Planning step {0} of {1}".format(i + 1, num_iter))
-    act_pred, img_pred = agent.collocation_cem(obs)
-    act_pred = act_pred.numpy()
-    act_preds.append(act_pred)
-    img_preds.append(img_pred.numpy())
-    # rewards_optim.append(fin_rew)
-    for j in range(len(act_pred)):
-      obs, reward, done, _ = env.step(act_pred[j])
-      total_reward += reward
-      # rewards_real.append(reward)
-      frames.append(obs['image'])
-    obs['image'] = [obs['image']]
-    # break
-  # plt.plot(range(config.time_limit), rewards_real, label="real")
-  # plt.plot(range(0, config.time_limit, config.mpc_steps), rewards_optim, label="optim")
-  # plt.legend()
-  # plt.show()
-  img_preds = np.vstack(img_preds)
-  imageio.mimsave("./preds.gif", img_preds, fps=60)
-  imageio.mimsave("./frames.gif", frames, fps=60)
-  print("Total reward: " + str(total_reward))
-  '''
-  # Run shooting method
-  act_preds = []
-  frames = [obs['image'][0]]
+  img_preds, act_preds, frames = [], [], []
   total_reward = 0
   for i in range(0, num_iter, config.mpc_steps):
     print("Planning step {0} of {1}".format(i + 1, num_iter))
-    act_pred, _, _= agent.shooting_cem(obs)
-    act_pred = act_pred.numpy()
-    act_preds.append(act_pred)
-    for j in range(len(act_pred)):
-      obs, reward, done, _ = env.step(act_pred[j])
+    # Run single planning step
+    if pt == 'colloc_cem':
+      act_pred, img_pred = agent.collocation_cem(obs)
+    elif pt == 'colloc_gd':
+      act_pred, img_pred = agent.collocation_gd(obs)
+    elif pt == 'colloc_gd_goal':
+      act_pred, img_pred = agent.collocation_goal(obs, 'goal_obs', 'gd')
+    elif pt == 'shooting':
+      act_pred = agent.shooting_cem(obs)
+    else:
+      raise ValueError("Unimplemented planning task")
+    act_pred_np = act_pred.numpy()
+    act_preds.append(act_pred_np)
+    if not is_shooting:
+      img_preds.append(img_pred.numpy())
+    # Simluate in environment
+    for j in range(len(act_pred_np)):
+      obs, reward, done, _ = env.step(act_pred_np[j])
       total_reward += reward
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
+    # Break if running goal-based collocation
+    if is_goal_based:
+      break
+  if not is_shooting:
+    img_preds = np.vstack(img_preds)
+    imageio.mimsave("./preds.gif", img_preds, fps=60)
   imageio.mimsave("./frames.gif", frames, fps=60)
   print("Total reward: " + str(total_reward))
-  '''
 
 
 if __name__ == '__main__':
