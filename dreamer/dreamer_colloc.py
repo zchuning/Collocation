@@ -84,14 +84,14 @@ def define_config():
   config.expl_decay = 0.0
   config.expl_min = 0.0
   # Planning
-  config.planning_task = 'colloc_cem' # colloc_gd, colloc_cem_goal, colloc_gd_goal, shooting
-  config.planning_horizon = 5
-  config.lambda_int = 50
-  config.mpc_steps = 5
+  config.planning_task = 'colloc_cem'
+  config.planning_horizon = 10
+  config.lambda_int = 100
+  config.mpc_steps = 10
   config.cem_steps = 60
   config.cem_batch_size = 10000
   config.cem_elite_ratio = 0.01
-  config.gd_steps = 500
+  config.gd_steps = 2000
   config.dyn_loss_scale = 50
   config.act_loss_scale = 5
   config.visualize = False
