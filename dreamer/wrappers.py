@@ -3,10 +3,16 @@ import functools
 import sys
 import threading
 import traceback
+import os
 
 import gym
 import numpy as np
 from PIL import Image
+
+if 'MUJOCO_RENDERER' in os.environ:
+  RENDERER = os.environ['MUJOCO_RENDERER']
+else:
+  RENDERER = 'glfw'
 
 class MetaWorld:
 
@@ -26,7 +32,7 @@ class MetaWorld:
     self._width = 64
     self._size = (self._width, self._width)
 
-    self._offscreen = MjRenderContext(self._env.sim, True, 0, 'glfw', True)
+    self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
     self._offscreen.cam.azimuth = 205
     self._offscreen.cam.elevation = -165
     self._offscreen.cam.distance = 2.6

@@ -3,3 +3,5 @@ log/
 *.gif
 *.json
 playground.py
+.idea
+.DS_Store
