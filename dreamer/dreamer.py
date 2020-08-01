@@ -101,11 +101,8 @@ class Dreamer(tools.Module):
     self._metrics = collections.defaultdict(tf.metrics.Mean)
     self._metrics['expl_amount']  # Create variable for checkpoint.
     self._float = prec.global_policy().compute_dtype
-    self._strategy = tf.distribute.MirroredStrategy()
-    with self._strategy.scope():
-      self._dataset = iter(self._strategy.experimental_distribute_dataset(
-          load_dataset(datadir, self._c)))
-      self._build_model()
+    self._dataset = iter(load_dataset(datadir, self._c))
+    self._build_model()
 
   def __call__(self, obs, reset, state=None, training=True):
     step = self._step.numpy().item()
@@ -117,10 +114,10 @@ class Dreamer(tools.Module):
       log = self._should_log(step)
       n = self._c.pretrain if self._should_pretrain() else self._c.train_steps
       print(f'Training for {n} steps.')
-      with self._strategy.scope():
-        for train_step in range(n):
-          log_images = self._c.log_images and log and train_step == 0
-          self.train(next(self._dataset), log_images)
+      for train_step in range(n):
+        log_images = self._c.log_images and log and train_step == 0
+        # import pdb; pdb.set_trace()
+        self.train(next(self._dataset), log_images)
       if log:
         self._write_summaries()
     action, state = self.policy(obs, state, training)
@@ -152,7 +149,7 @@ class Dreamer(tools.Module):
 
   @tf.function()
   def train(self, data, log_images=False):
-    self._strategy.experimental_run_v2(self._train, args=(data, log_images))
+    self._train(data, log_images)
 
   def _train(self, data, log_images):
     with tf.GradientTape() as model_tape:
@@ -174,7 +171,6 @@ class Dreamer(tools.Module):
       div = tf.reduce_mean(tfd.kl_divergence(post_dist, prior_dist))
       div = tf.maximum(div, self._c.free_nats)
       model_loss = self._c.kl_scale * div - sum(likes.values())
-      model_loss /= float(self._strategy.num_replicas_in_sync)
 
     with tf.GradientTape() as actor_tape:
       imag_feat = self._imagine_ahead(post)
@@ -190,13 +186,11 @@ class Dreamer(tools.Module):
       discount = tf.stop_gradient(tf.math.cumprod(tf.concat(
           [tf.ones_like(pcont[:1]), pcont[:-2]], 0), 0))
       actor_loss = -tf.reduce_mean(discount * returns)
-      actor_loss /= float(self._strategy.num_replicas_in_sync)
 
     with tf.GradientTape() as value_tape:
       value_pred = self._value(imag_feat)[:-1]
       target = tf.stop_gradient(returns)
       value_loss = -tf.reduce_mean(discount * value_pred.log_prob(target))
-      value_loss /= float(self._strategy.num_replicas_in_sync)
 
     model_norm = self._model_opt(model_tape, model_loss)
     actor_norm = self._actor_opt(actor_tape, actor_loss)
