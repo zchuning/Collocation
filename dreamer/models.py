@@ -119,6 +119,36 @@ class ConvDecoder(tools.Module):
     return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
 
 
+class StateEncoder(tools.Module):
+  def __init__(self, shape, layers, units, act=tf.nn.elu):
+    self._shape = shape
+    self._layers = layers
+    self._units = units
+    self._act = act
+
+  def __call__(self, obs):
+    x = tf.reshape(obs['state'], (-1,) + tuple(obs['state'].shape[-1:]))
+    for index in range(self._layers):
+      x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
+    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._act)(x)
+    x = tf.reshape(x, tf.concat([tf.shape(obs['state'])[:-1], self._shape], 0))
+    return x
+
+class StateDecoder(tools.Module):
+  def __init__(self, shape, layers, units, act=tf.nn.elu):
+    self._shape = shape
+    self._layers = layers
+    self._units = units
+    self._act = act
+
+  def __call__(self, features):
+    x = features
+    for index in range(self._layers):
+      x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
+    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._act)(x)
+    mean = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
+    return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
+
 class DenseDecoder(tools.Module):
 
   def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu):
