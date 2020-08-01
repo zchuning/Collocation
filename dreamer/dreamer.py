@@ -116,7 +116,6 @@ class Dreamer(tools.Module):
       print(f'Training for {n} steps.')
       for train_step in range(n):
         log_images = self._c.log_images and log and train_step == 0
-        # import pdb; pdb.set_trace()
         self.train(next(self._dataset), log_images)
       if log:
         self._write_summaries()
@@ -380,6 +379,8 @@ def make_env(config, writer, prefix, datadir, store):
     env = wrappers.OneHotAction(env)
   elif suite == "mw":
     env = wrappers.MetaWorld(task, config.action_repeat)
+  elif suite == "colloc":
+    env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
   else:
     raise NotImplementedError(suite)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
