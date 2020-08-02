@@ -123,7 +123,7 @@ def simulate(agent, envs, steps=0, episodes=0, state=None):
     promises = [e.step(a, blocking=False) for e, a in zip(envs, action)]
     obs, _, done = zip(*[p()[:3] for p in promises])
     obs = list(obs)
-    done = np.stack(done)
+    done = np.stack(done).astype(np.int32)
     episode += int(done.sum())
     length += 1
     step += (done * length).sum()

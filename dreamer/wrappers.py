@@ -21,10 +21,14 @@ class DreamerMujocoEnv:
   def __init__(self, task=None, action_repeat=1):
     from mujoco_py import MjRenderContext
     from envs.pointmass.pointmass_env import Pointmass
+    from envs.push.push_env import Push
     from envs.pointmass.pointmass_hard_env import PointmassHard
     # from envs.pointmass.pointmass_smart_env import Pointmass as PointmassSmart
     with self.LOCK:
-      self._env = Pointmass()
+      if task == 'pm_obstacle':
+        self._env = Pointmass()
+      elif task == 'pm_push':
+        self._env = Push()
 
     self._action_repeat = action_repeat
     self._width = 64
