@@ -27,6 +27,8 @@ import models
 import tools
 import wrappers
 from dreamer import Dreamer, preprocess
+from vis import npy2gif
+
 
 def define_config():
   # TODO nest configs
@@ -95,7 +97,8 @@ def define_config():
   config.lambda_int = 100
   config.dyn_loss_scale = 50
   config.act_loss_scale = 5
-  config.visualize = False
+  config.visualize = True
+  config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   return config
 
 
@@ -124,10 +127,9 @@ class DreamerColloc(Dreamer):
       model_imgs.append(model_img.numpy())
     model_imgs = np.array(model_imgs)
     # Write images
-    imageio.imwrite(self._c.logdir / "colloc_imgs.jpg", colloc_imgs)
-    imageio.mimsave(self._c.logdir / "model.gif", model_imgs, fps=60)
-    imageio.imwrite(self._c.logdir / "model_imgs.jpg", model_imgs.reshape(-1, 64, 3))
-    sys.exit()
+    imageio.imwrite(self._c.logdir_colloc / "colloc_imgs.jpg", colloc_imgs)
+    imageio.mimsave(self._c.logdir_colloc / "model.gif", model_imgs, fps=60)
+    imageio.imwrite(self._c.logdir_colloc / "model_imgs.jpg", model_imgs.reshape(-1, 64, 3))
 
   def collocation_goal(self, init, goal, optim):
     horizon = self._c.planning_horizon
@@ -549,8 +551,9 @@ def main(config):
       break
   if not is_shooting:
     img_preds = np.vstack(img_preds)
-    imageio.mimsave(config.logdir / "preds.gif", img_preds, fps=10)
-  imageio.mimsave(config.logdir / "frames.gif", frames, fps=10)
+    # TODO mark beginning in the gif
+    imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
+  imageio.mimsave(config.logdir_colloc / "frames.gif", frames, fps=10)
   import pdb; pdb.set_trace()
   print("Total reward: " + str(total_reward))
 
