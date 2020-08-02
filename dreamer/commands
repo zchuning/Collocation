@@ -1,0 +1,31 @@
+
+python3 dreamer.py --logdir ./logdir/dmc_walker_walk/dreamer/1 --task dmc_walker_walk
+
+## Pointmass
+python3 dreamer.py --logdir ./logdir/pm_obstacle/1 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20
+# collect 10 episodes
+python3 dreamer.py --logdir ./logdir/pm_obstacle/10ep --task colloc_pm_obstacle --action_repeat=1 --time_limit=20 --batch_length=20 --eval_every=200
+# python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20
+# python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b01 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
+# python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b001 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.01
+
+## Planning
+# collocation
+python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_cem --planning_horizon 20 --mpc_steps 20  --batch_length=20
+# collocation
+python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20
+
+## pointmass from state
+python3 dreamer_state.py --logdir ./logdir/pm_obstacle_state/1 --task colloc_pm_obstacle --action_repeat=1 --time_limit=20 --batch_length=20 --state_size=4
+python3 dreamer_state.py --logdir ./logdir/pm_obstacle_state/10ep --task colloc_pm_obstacle --action_repeat=1 --time_limit=20 --batch_length=20 --state_size=4 --eval_every=200
+# far goal
+python3 dreamer_state.py --logdir ./logdir/pm_obstacle_state/far_goal --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --state_size=4
+
+## The configuration that solves pointmass:
+python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b01 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
+
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_obstacle/far_goal_b01/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --time_limit=20 --logdir_colloc ./logdir/pm_obstacle/far_goal_b01/colloc_20
+
+
+
+## Pushing
