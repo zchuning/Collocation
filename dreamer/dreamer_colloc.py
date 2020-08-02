@@ -26,7 +26,7 @@ sys.path.append(str(pathlib.Path(__file__).parent))
 import models
 import tools
 import wrappers
-from dreamer import Dreamer, preprocess
+from dreamer import Dreamer, preprocess, make_bare_env
 from vis import npy2gif
 
 
@@ -467,18 +467,7 @@ class DreamerColloc(Dreamer):
 
 
 def make_env(config):
-  # This is like standard make env, but no store, no summarize episode, no collect, and with added reset
-  suite, task = config.task.split('_', 1)
-  if suite == 'dmc':
-    env = wrappers.DeepMindControl(task)
-    env = wrappers.ActionRepeat(env, config.action_repeat)
-    env = wrappers.NormalizeActions(env)
-  elif suite == 'mw':
-    env = wrappers.MetaWorld(task, config.action_repeat)
-  elif suite == "colloc":
-    env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
-  else:
-    raise ValueError("Unspoorted environment")
+  env = make_bare_env(config)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   env = wrappers.RewardObs(env)
   obs = env.reset()

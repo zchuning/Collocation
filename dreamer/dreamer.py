@@ -367,22 +367,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
 
 
 def make_env(config, writer, prefix, datadir, store):
-  suite, task = config.task.split('_', 1)
-  if suite == 'dmc':
-    env = wrappers.DeepMindControl(task)
-    env = wrappers.ActionRepeat(env, config.action_repeat)
-    env = wrappers.NormalizeActions(env)
-  elif suite == 'atari':
-    env = wrappers.Atari(
-        task, config.action_repeat, (64, 64), grayscale=False,
-        life_done=True, sticky_actions=True)
-    env = wrappers.OneHotAction(env)
-  elif suite == "mw":
-    env = wrappers.MetaWorld(task, config.action_repeat)
-  elif suite == "colloc":
-    env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
-  else:
-    raise NotImplementedError(suite)
+  env = make_bare_env(config)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   callbacks = []
   if store:
@@ -391,6 +376,26 @@ def make_env(config, writer, prefix, datadir, store):
       lambda ep: summarize_episode(ep, config, datadir, writer, prefix))
   env = wrappers.Collect(env, callbacks, config.precision)
   env = wrappers.RewardObs(env)
+  return env
+
+
+def make_bare_env(config):
+  suite, task = config.task.split('_', 1)
+  if suite == 'dmc':
+    env = wrappers.DeepMindControl(task)
+    env = wrappers.ActionRepeat(env, config.action_repeat)
+    env = wrappers.NormalizeActions(env)
+  elif suite == 'atari':
+    env = wrappers.Atari(
+      task, config.action_repeat, (64, 64), grayscale=False,
+      life_done=True, sticky_actions=True)
+    env = wrappers.OneHotAction(env)
+  elif suite == "mw":
+    env = wrappers.MetaWorld(task, config.action_repeat)
+  elif suite == "colloc":
+    env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
+  else:
+    raise NotImplementedError(suite)
   return env
 
 
