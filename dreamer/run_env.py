@@ -11,7 +11,7 @@ class AttrDict(dict):
   
   
 if __name__ == "__main__":
-    env = DreamerMujocoEnv()
+    env = DreamerMujocoEnv(task='pm_push')
     act_space = env.action_space
     
     # TODO Dreamer code has some more magic with Async and other wrappers

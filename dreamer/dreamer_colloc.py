@@ -485,6 +485,7 @@ def main(config):
   config.steps = int(config.steps)
   config.logdir.mkdir(parents=True, exist_ok=True)
   print('Logdir', config.logdir)
+  config.logdir_colloc.mkdir(parents=True, exist_ok=True)
 
   # Create environment.
   env, obs = make_env(config)
@@ -543,7 +544,6 @@ def main(config):
     # TODO mark beginning in the gif
     imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
   imageio.mimsave(config.logdir_colloc / "frames.gif", frames, fps=10)
-  import pdb; pdb.set_trace()
   print("Total reward: " + str(total_reward))
 
 

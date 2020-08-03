@@ -8,7 +8,7 @@ import tensorflow as tf
 from gym import spaces
 
 FIXED_START = False ##True ##########
-FIXED_GOAL = False ##True ##########
+FIXED_GOAL = True ##True ##########
 FIXED_OBJECT = False ##True ##########
 
 INCLUDE_VEL = True
