@@ -368,7 +368,7 @@ class DreamerColloc(Dreamer):
       priors = self._dynamics.imagine(actions, init_states)
       feats = tf.squeeze(tf.concat([priors['stoch'], priors['deter']], axis=-1))
       rewards = tf.reduce_sum(self._reward(feats).mode(), axis=1)
-      return rewards
+      return rewards, feats
 
     # CEM loop:
     rewards = []
@@ -379,7 +379,7 @@ class DreamerColloc(Dreamer):
       # Sample action sequences and evaluate fitness
       samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch])
       samples = tf.clip_by_value(samples, min_action, max_action)
-      fitness = eval_fitness(samples)
+      fitness, feats = eval_fitness(samples)
       rewards.append(tf.reduce_mean(fitness).numpy())
       # Refit distribution to elite samples
       _, elite_inds = tf.nn.top_k(fitness, elite_size, sorted=False)
@@ -389,6 +389,8 @@ class DreamerColloc(Dreamer):
 
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
+    feat_pred = feats[elite_inds[0]]
+    img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
     print("Final average reward: {0}".format(rewards[-1] / horizon))
     if self._c.visualize:
       import matplotlib.pyplot as plt
@@ -396,7 +398,7 @@ class DreamerColloc(Dreamer):
       plt.plot(range(len(rewards)), rewards)
       plt.savefig('./lr.jpg')
       plt.show()
-    return act_pred
+    return act_pred, img_pred
 
   def _train(self, data, log_images):
     with tf.GradientTape() as model_tape:
@@ -523,13 +525,12 @@ def main(config):
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting':
-      act_pred = agent.shooting_cem(obs)
+      act_pred, img_pred = agent.shooting_cem(obs)
     else:
       raise ValueError("Unimplemented planning task")
     act_pred_np = act_pred.numpy()
     act_preds.append(act_pred_np)
-    if not is_shooting:
-      img_preds.append(img_pred.numpy())
+    img_preds.append(img_pred.numpy())
     # Simluate in environment
     for j in range(len(act_pred_np)):
       obs, reward, done, _ = env.step(act_pred_np[j])
@@ -539,10 +540,9 @@ def main(config):
     # Break if running goal-based collocation
     if is_goal_based:
       break
-  if not is_shooting:
-    img_preds = np.vstack(img_preds)
-    # TODO mark beginning in the gif
-    imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
+  img_preds = np.vstack(img_preds)
+  # TODO mark beginning in the gif
+  imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
   imageio.mimsave(config.logdir_colloc / "frames.gif", frames, fps=10)
   print("Total reward: " + str(total_reward))
 
