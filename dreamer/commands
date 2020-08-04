@@ -9,11 +9,14 @@ python3 dreamer.py --logdir ./logdir/pm_obstacle/10ep --task colloc_pm_obstacle 
 # python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b01 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
 # python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b001 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.01
 
+
 ## Planning
 # collocation
 python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_cem --planning_horizon 20 --mpc_steps 20  --batch_length=20
 # collocation
-python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20
+python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --logdir_colloc ./logdir/pm_obstacle/far_goal_b01/colloc_20 --eval_tasks=1
+python3 dreamer_colloc.py --logdir ./logdir/pm_obstacle/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task shooting --planning_horizon 20 --mpc_steps 20  --batch_length=20  --logdir_colloc ./logdir/pm_obstacle/far_goal_b01/shooting_20 --eval_tasks=1
+
 
 ## pointmass from state
 python3 dreamer_state.py --logdir ./logdir/pm_obstacle_state/1 --task colloc_pm_obstacle --action_repeat=1 --time_limit=20 --batch_length=20 --state_size=4
@@ -24,8 +27,11 @@ python3 dreamer_state.py --logdir ./logdir/pm_obstacle_state/far_goal --task col
 ## The configuration that solves pointmass:
 python3 dreamer.py --logdir ./logdir/pm_obstacle/far_goal_b01 --task colloc_pm_obstacle --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
 
-python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_obstacle/far_goal_b01/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --time_limit=20 --logdir_colloc ./logdir/pm_obstacle/far_goal_b01/colloc_20
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_obstacle/far_goal_b01/colloc --task colloc_pm_obstacle  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --logdir_colloc ./logdir/pm_obstacle/far_goal_b01/colloc_20
 
 
 
 ## Pushing
+python3 dreamer.py --logdir ./logdir/pm_push/b01 --task colloc_pm_push --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
+
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_push/1g_b01/colloc --task colloc_pm_push  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --logdir_colloc ./logdir/pm_push/1g_b01/colloc_20
