@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
+from blox.utils import AverageMeter
 
 tf.get_logger().setLevel('ERROR')
 
@@ -99,6 +100,7 @@ def define_config():
   config.act_loss_scale = 5
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
+  config.eval_tasks = 1
   return config
 
 
@@ -202,7 +204,7 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(forces, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
 
-  def collocation_gd(self, obs):
+  def collocation_gd(self, obs, save_images):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -265,7 +267,7 @@ class DreamerColloc(Dreamer):
     img_pred = self._decode(tr[:min(horizon, mpc_steps), self._actdim:]).mode()
     print("Final average dynamics loss: {0}".format(dyn_loss[-1] / horizon))
     print("Final average reward: {0}".format(rewards[-1] / horizon))
-    if self._c.visualize:
+    if save_images:
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
 
@@ -472,11 +474,65 @@ def make_env(config):
   env = make_bare_env(config)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   env = wrappers.RewardObs(env)
+  return env
+
+
+def colloc_simulate(agent, config, env, save_images=True):
+  """ Run planning loop """
+  # Define task-related variables
+  pt = config.planning_task
+  actspace = env.action_space
   obs = env.reset()
   obs['image'] = [obs['image']]
-  return env, obs
-
-
+  # Obtain goal observation for goal-based collocation
+  is_goal_based = (len(config.planning_task.split('_')) == 3)
+  if is_goal_based:
+    goal_obs = env.render_goal()
+    goal_obs['image'] = [goal_obs['image']]
+  
+  num_iter = config.time_limit // config.action_repeat
+  img_preds, act_preds, frames = [], [], []
+  total_reward = 0
+  for i in range(0, num_iter, config.mpc_steps):
+    print("Planning step {0} of {1}".format(i + 1, num_iter))
+    # Run single planning step
+    if pt == 'colloc_cem':
+      act_pred, img_pred = agent.collocation_cem(obs)
+    elif pt == 'colloc_gd':
+      act_pred, img_pred = agent.collocation_gd(obs, save_images)
+    elif pt == 'colloc_gd_goal':
+      act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
+    elif pt == 'shooting':
+      act_pred, img_pred = agent.shooting_cem(obs)
+    elif pt == 'random':
+      act_pred = tf.random.uniform((config.mpc_steps,) + actspace.shape, actspace.low[0], actspace.high[0])
+      img_pred = None
+    else:
+      raise ValueError("Unimplemented planning task")
+    act_pred_np = act_pred.numpy()
+    act_preds.append(act_pred_np)
+    if img_pred is not None:
+      img_preds.append(img_pred.numpy())
+    # Simluate in environment
+    for j in range(len(act_pred_np)):
+      obs, reward, done, _ = env.step(act_pred_np[j])
+      total_reward += reward
+      frames.append(obs['image'])
+    obs['image'] = [obs['image']]
+    # Break if running goal-based collocation
+    if is_goal_based:
+      break
+  if save_images:
+    if img_pred is not None:
+      img_preds = np.vstack(img_preds)
+      # TODO mark beginning in the gif
+      imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
+    imageio.mimsave(config.logdir_colloc / "frames.gif", frames, fps=10)
+  print("Total reward: " + str(total_reward))
+  
+  return total_reward
+  
+  
 def main(config):
   if config.gpu_growth:
     for gpu in tf.config.experimental.list_physical_devices('GPU'):
@@ -490,7 +546,7 @@ def main(config):
   config.logdir_colloc.mkdir(parents=True, exist_ok=True)
 
   # Create environment.
-  env, obs = make_env(config)
+  env = make_env(config)
 
   # Create agent.
   actspace = env.action_space
@@ -501,50 +557,12 @@ def main(config):
   agent = DreamerColloc(config, datadir, actspace, writer)
   agent.load(config.logdir / 'variables.pkl')
 
-  # Define task-related variables
-  pt = config.planning_task
-  is_shooting = pt == 'shooting'
-  is_goal_based = (len(config.planning_task.split('_')) == 3)
-
-  # Obtain goal observation for goal-based collocation
-  if is_goal_based:
-    goal_obs = env.render_goal()
-    goal_obs['image'] = [goal_obs['image']]
-
-  # Run planning loop
-  num_iter = config.time_limit // config.action_repeat
-  img_preds, act_preds, frames = [], [], []
-  total_reward = 0
-  for i in range(0, num_iter, config.mpc_steps):
-    print("Planning step {0} of {1}".format(i + 1, num_iter))
-    # Run single planning step
-    if pt == 'colloc_cem':
-      act_pred, img_pred = agent.collocation_cem(obs)
-    elif pt == 'colloc_gd':
-      act_pred, img_pred = agent.collocation_gd(obs)
-    elif pt == 'colloc_gd_goal':
-      act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
-    elif pt == 'shooting':
-      act_pred, img_pred = agent.shooting_cem(obs)
-    else:
-      raise ValueError("Unimplemented planning task")
-    act_pred_np = act_pred.numpy()
-    act_preds.append(act_pred_np)
-    img_preds.append(img_pred.numpy())
-    # Simluate in environment
-    for j in range(len(act_pred_np)):
-      obs, reward, done, _ = env.step(act_pred_np[j])
-      total_reward += reward
-      frames.append(obs['image'])
-    obs['image'] = [obs['image']]
-    # Break if running goal-based collocation
-    if is_goal_based:
-      break
-  img_preds = np.vstack(img_preds)
-  # TODO mark beginning in the gif
-  imageio.mimsave(config.logdir_colloc / "preds.gif", img_preds, fps=10)
-  imageio.mimsave(config.logdir_colloc / "frames.gif", frames, fps=10)
-  print("Total reward: " + str(total_reward))
+  reward_meter = AverageMeter()
+  for i in range(config.eval_tasks):
+    save_images = i % 10 and config.visualize
+    reward_meter.update(colloc_simulate(agent, config, env, save_images))
+  print(f'Average reward across {config.eval_tasks} tasks: {reward_meter.avg}')
+  import pdb; pdb.set_trace()
 
 
 if __name__ == '__main__':
