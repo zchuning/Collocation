@@ -14,33 +14,14 @@ if 'MUJOCO_RENDERER' in os.environ:
 else:
   RENDERER = 'glfw'
 
-class DreamerMujocoEnv:
 
+class DreamerEnv():
   LOCK = threading.Lock()
-
-  def __init__(self, task=None, action_repeat=1):
-    from mujoco_py import MjRenderContext
-    from envs.pointmass.pointmass_env import Pointmass
-    from envs.push.push_env import Push
-    from envs.pointmass.pointmass_hard_env import PointmassHard
-    # from envs.pointmass.pointmass_smart_env import Pointmass as PointmassSmart
-    with self.LOCK:
-      if task == 'pm_obstacle':
-        self._env = Pointmass()
-      elif task == 'pm_push':
-        self._env = Push()
-
+  
+  def __init__(self, action_repeat):
     self._action_repeat = action_repeat
     self._width = 64
     self._size = (self._width, self._width)
-
-    self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
-    self._offscreen.cam.azimuth = 0
-    self._offscreen.cam.elevation = 90
-    self._offscreen.cam.distance = 2.6
-    self._offscreen.cam.lookat[0] = 0
-    self._offscreen.cam.lookat[1] = 0
-    self._offscreen.cam.lookat[2] = 0
 
   @property
   def observation_space(self):
@@ -72,29 +53,42 @@ class DreamerMujocoEnv:
 
   def render(self, mode):
     return self._env.render(mode)
-
-  # def render_goal(self):
-  #   self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
-  #   self.reset()
-  #   action = np.zeros(self._env.action_space.low.shape)
-  #   self._env.step(action)
-  #   goal_obs = self._get_obs()
-  #   goal_obs['reward'] = 0.0
-  #   self._env.hand_init_pos = self._env.init_config['hand_init_pos']
-  #   self.reset()
-  #   return goal_obs
-
+  
   def _get_obs(self, state):
     self._offscreen.render(self._width, self._width, -1)
     image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
     return {'image': image, 'state': state}
+  
+  
+class DreamerMujocoEnv(DreamerEnv):
+  def __init__(self, task=None, action_repeat=1):
+    super().__init__(action_repeat)
+    from mujoco_py import MjRenderContext
+    from envs.pointmass.pointmass_env import Pointmass
+    from envs.push.push_env import Push
+    from envs.pointmass.pointmass_hard_env import PointmassHard
+    # from envs.pointmass.pointmass_smart_env import Pointmass as PointmassSmart
+    with self.LOCK:
+      if task == 'pm_obstacle':
+        self._env = Pointmass()
+      elif task == 'pm_push':
+        self._env = Push()
+
+    self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
+    self._offscreen.cam.azimuth = 0
+    self._offscreen.cam.elevation = 90
+    self._offscreen.cam.distance = 2.6
+    self._offscreen.cam.lookat[0] = 0
+    self._offscreen.cam.lookat[1] = 0
+    self._offscreen.cam.lookat[2] = 0
 
 
-class MetaWorld:
 
-  LOCK = threading.Lock()
 
+
+class MetaWorld(DreamerEnv):
   def __init__(self, name, action_repeat):
+    super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
     domain, task = name.split('_', 1)
@@ -116,36 +110,15 @@ class MetaWorld:
     self._offscreen.cam.lookat[1] = 1.1
     self._offscreen.cam.lookat[2] = -0.1
 
-  @property
-  def observation_space(self):
-    shape = self._size + (3,)
-    space = gym.spaces.Box(low=0, high=255, shape=shape, dtype=np.uint8)
-    return gym.spaces.Dict({'image': space})
-
-  @property
-  def action_space(self):
-    return self._env.action_space
-
-  def close(self):
-    return self._env.close()
-
-  def reset(self):
-    with self.LOCK:
-      self._env.reset()
-    return self._get_obs()
-
   def step(self, action):
     total_reward = 0.0
     for step in range(self._action_repeat):
-      _, reward, done, info = self._env.step(action)
+      state, reward, done, info = self._env.step(action)
       total_reward += min(reward, 100000)
       if done:
         break
-    obs = self._get_obs()
+    obs = self._get_obs(state)
     return obs, total_reward, done, info
-
-  def render(self, mode):
-    return self._env.render(mode)
 
   def render_goal(self):
     self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
@@ -158,13 +131,7 @@ class MetaWorld:
     self.reset()
     return goal_obs
 
-  def _get_obs(self):
-    self._offscreen.render(self._width, self._width, -1)
-    image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
-    return {'image': image}
-
-
-
+  
 class DeepMindControl:
 
   def __init__(self, name, size=(64, 64), camera=None):
