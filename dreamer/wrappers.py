@@ -83,7 +83,16 @@ class DreamerMujocoEnv(DreamerEnv):
     self._offscreen.cam.lookat[2] = 0
 
 
+class KitchenEnv(DreamerEnv):
+  def __init__(self, task=None, action_repeat=1):
+    super().__init__(action_repeat)
+    import d4rl
+    with self.LOCK:
+      self._env = gym.make(task)
 
+  def _get_obs(self, state):
+    image = self.render('rgb_array')
+    return {'image': image, 'state': state}
 
 
 class MetaWorld(DreamerEnv):

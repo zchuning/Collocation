@@ -394,6 +394,8 @@ def make_bare_env(config):
     env = wrappers.MetaWorld(task, config.action_repeat)
   elif suite == "colloc":
     env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
+  elif suite == "d4rl":
+    env = wrappers.KitchenEnv(task, config.action_repeat)
   else:
     raise NotImplementedError(suite)
   return env

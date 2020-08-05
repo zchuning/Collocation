@@ -1,3 +1,6 @@
 [submodule "dreamer/blox"]
 	path = dreamer/blox
 	url = https://github.com/orybkin/blox-nn
+[submodule "dreamer/d4rl_repo"]
+	path = dreamer/d4rl_repo
+	url = https://github.com/rail-berkeley/d4rl
