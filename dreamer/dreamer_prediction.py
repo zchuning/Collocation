@@ -26,8 +26,14 @@ sys.path.append(str(pathlib.Path(__file__).parent))
 import models
 import tools
 import wrappers
-from dreamer import Dreamer, define_config, preprocess, count_steps, load_dataset, summarize_episode, make_env
+from dreamer import Dreamer, preprocess, count_steps, load_dataset, summarize_episode, make_env
+import dreamer
 
+def define_config():
+  config = dreamer.define_config()
+  config.datadir = config.logdir / 'episodes'
+  
+  return config
 
 class DreamerPrediction(Dreamer):
   def _train(self, data, log_images):
@@ -86,7 +92,7 @@ def main(config):
   print('Logdir', config.logdir)
   
   # Create environments.
-  datadir = config.logdir / 'episodes'
+  datadir = config.datadir
   writer = tf.summary.create_file_writer(
     str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()
