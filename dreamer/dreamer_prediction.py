@@ -36,6 +36,22 @@ def define_config():
   return config
 
 class DreamerPrediction(Dreamer):
+
+  def __init__(self, config, datadir, actspace, writer):
+    super().__init__(config, datadir, actspace, writer)
+    self._step = tf.Variable(0, dtype=tf.int64)
+  
+  def __call__(self, training=True):
+    step = self._step.numpy().item()
+    tf.summary.experimental.set_step(step)
+    log = self._should_log(step)
+    log_images = self._c.log_images and log
+    self.train(next(self._dataset), log_images)
+    if log:
+      self._write_summaries()
+    if training:
+      self._step.assign_add(1)
+  
   def _train(self, data, log_images):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
@@ -100,7 +116,6 @@ def main(config):
   actspace = env.action_space
   
   # Train the agent.
-  step = count_steps(datadir, config)
   agent = DreamerPrediction(config, datadir, actspace, writer)
   if (config.logdir / 'variables.pkl').exists():
     print('Load checkpoint.')
@@ -108,10 +123,7 @@ def main(config):
   
   # Train
   for i in tqdm(range(config.steps)):
-    # TODO clean up steps
-    log_images = config.log_images and agent._should_log(step)
-    tf.summary.experimental.set_step(step)
-    agent.train(next(agent._dataset), log_images)
+    agent()
     agent.save(config.logdir / 'variables.pkl')
 
 
