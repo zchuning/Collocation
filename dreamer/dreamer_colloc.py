@@ -93,14 +93,17 @@ def define_config():
   config.cem_elite_ratio = 0.01
   config.gd_steps = 2000
   config.gd_lr = 0.05
-  config.lambda_int = 100
+  config.lambda_int = 50
   config.lambda_lr = 1
-  config.nu_lr = 1
-  config.dyn_loss_scale = 50
-  config.act_loss_scale = 5
+  config.nu_lr = 100
+  config.dyn_loss_scale = 5000
+  config.act_loss_scale = 100
   config.visualize = False
   config.prefix = ''
   config.num_ensembles = 5
+  # Collect episodes
+  config.collect_episodes = False
+  config.num_episodes = 100
   return config
 
 
@@ -271,6 +274,14 @@ class Dreamer(tools.Module):
         feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
         log_prob_seq = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
         log_prob = tf.reduce_sum(lambdas * log_prob_seq)
+        # Optimize log probability for stochastics states instead of SSE
+        # priors_dist = self._dynamics.get_dist(priors)
+        # stoch_loss = -priors_dist.log_prob(feats[1:, :self._c.stoch_size])
+        # stoch_loss = tf.reduce_sum(tf.square(priors['mean'][0] - feats[1:, :self._c.stoch_size]), axis=1)
+        # deter_loss = tf.reduce_sum(tf.square(priors['deter'][0] - feats[1:, self._c.stoch_size:]), axis=1)
+        # print("Stoch_loss: " + str(tf.reduce_sum(stoch_loss)) + ", deter loss: " + str(tf.reduce_sum(deter_loss)))
+        # log_prob_seq = stoch_loss + deter_loss
+        # log_prob = tf.reduce_sum(lambdas * log_prob_seq)
         actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
         actions_constr = tf.reduce_sum(nus * actions_viol)
         fitness = - reward + self._c.dyn_loss_scale * log_prob + self._c.act_loss_scale * actions_constr
@@ -824,6 +835,7 @@ def main(config):
   config.steps = int(config.steps)
   config.logdir.mkdir(parents=True, exist_ok=True)
   print('Logdir', config.logdir)
+  datadir = config.logdir / 'episodes'
 
   # Create environment.
   suite, task = config.task.split('_', 1)
@@ -835,19 +847,17 @@ def main(config):
     if task == 'sawyer_SawyerPushXYEnv':
       env = wrappers.SawyerPushXYEnv(False, config.action_repeat)
     else:
-      env = wrappers.MetaWorld(task, config.action_repeat)
+      env = wrappers.MetaWorld(task, False, config.action_repeat)
   else:
     raise ValueError("Unsuported environment")
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
+  if config.collect_episodes:
+    callbacks = []
+    callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
+    callbacks.append(
+        lambda ep: summarize_episode(ep, config, datadir, writer, 'train'))
+    env = wrappers.Collect(env, callbacks, config.precision)
   env = wrappers.RewardObs(env)
-  obs = env.reset()
-  obs['image'] = [obs['image']]
-  init_obs = obs.copy()
-
-  # Define task-related variables
-  pt = config.planning_task
-  is_shooting = pt == 'shooting'
-  is_goal_based = (len(config.planning_task.split('_')) == 3)
 
   # Create agent.
   actspace = env.action_space
@@ -857,6 +867,12 @@ def main(config):
   writer.set_as_default()
   agent = Dreamer(config, datadir, actspace, writer)
   agent.load(config.logdir / 'variables.pkl')
+
+  # Define task-related variables
+  pt = config.planning_task
+  is_shooting = pt == 'shooting'
+  is_goal_based = (len(config.planning_task.split('_')) == 3)
+  # Create an ensemble of agents
   if pt == 'colloc_ensemble':
     agents = []
     for i in range(config.num_ensembles):
@@ -864,68 +880,73 @@ def main(config):
       agent_temp.load(config.logdir / f'variables{i}.pkl')
       agents.append(agent_temp)
 
-  # Obtain goal observation for goal-based collocation
-  if is_goal_based:
-    goal_obs = env.render_goal()
-    goal_obs['image'] = [goal_obs['image']]
-
   # Run planning loop
-  num_iter = config.time_limit // config.action_repeat
-  img_preds, act_preds, frames = [], [], []
-  total_reward = 0
-  start = time.time()
-  model_frames = []
-  for i in range(0, num_iter, config.mpc_steps):
-    print("Planning step {0} of {1}".format(i + 1, num_iter))
-    # Run single planning step
-    if pt == 'colloc_cem':
-      act_pred, img_pred = agent.collocation_cem(obs)
-    elif pt == 'colloc_gd':
-      act_pred, img_pred, model_imgs = agent.collocation_gd(obs)
-      model_frames.append(model_imgs)
-    elif pt == 'colloc_gd_goal':
-      act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
-    elif pt == 'shooting':
-      act_pred = agent.shooting_cem(obs)
-    elif pt == 'colloc_ensemble':
-      act_pred, img_pred = collocation_ensemble(config, actspace, agents, obs)
-    else:
-      raise ValueError("Unimplemented planning task")
-    act_pred_np = act_pred.numpy()
-    act_preds.append(act_pred_np)
-    if not is_shooting:
-      img_preds.append(img_pred.numpy())
-    # Simluate in environment
-    for j in range(len(act_pred_np)):
-      obs, reward, done, _ = env.step(act_pred_np[j])
-      total_reward += reward
-      frames.append(obs['image'])
+  for _ in range(config.num_episodes):
+    obs = env.reset()
     obs['image'] = [obs['image']]
-    # Break if running goal-based collocation
+
+    # Obtain goal observation for goal-based collocation
     if is_goal_based:
-      break
-  end = time.time()
-  print(f"Planning time: {end - start}")
-  print("Total reward: " + str(total_reward))
-  # Save videos
-  imageio.mimsave(f"./frames_{config.prefix}.gif", frames, fps=60)
-  if not is_shooting:
-    img_preds = np.vstack(img_preds)
-    imageio.mimsave(f"./preds_{config.prefix}.gif", img_preds, fps=60)
-  if len(model_frames) > 0:
-    model_frames = np.vstack(model_frames)
-    imageio.mimsave(f"./model_{config.prefix}.gif", model_frames, fps=60)
-  # Save executions of an ensemble of models
-  act_preds = np.vstack(act_preds)
-  np.save('actions.npy', act_preds)
-  # act_preds = np.load('actions.npy')
-  if len(act_preds) > 0:
-    for i in range(config.num_ensembles):
-      print(f"Simulating in model {i}")
-      agent.load(config.logdir / f'variables{i}.pkl')
-      init_feat = agent.get_init_feat(init_obs)
-      model_frames = agent.visualize_model_preds(init_feat, tf.convert_to_tensor(act_preds))
-      imageio.mimsave(f"./model_e{i}_{config.prefix}.gif", model_frames, fps=60)
+      goal_obs = env.render_goal()
+      goal_obs['image'] = [goal_obs['image']]
+
+    init_obs = obs.copy()
+    num_iter = config.time_limit // config.action_repeat
+    img_preds, act_preds, frames = [], [], []
+    total_reward = 0
+    start = time.time()
+    model_frames = []
+    for i in range(0, num_iter, config.mpc_steps):
+      print("Planning step {0} of {1}".format(i + 1, num_iter))
+      # Run single planning step
+      if pt == 'colloc_cem':
+        act_pred, img_pred = agent.collocation_cem(obs)
+      elif pt == 'colloc_gd':
+        act_pred, img_pred, model_imgs = agent.collocation_gd(obs)
+        model_frames.append(model_imgs)
+      elif pt == 'colloc_gd_goal':
+        act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
+      elif pt == 'shooting':
+        act_pred = agent.shooting_cem(obs)
+      elif pt == 'colloc_ensemble':
+        act_pred, img_pred = collocation_ensemble(config, actspace, agents, obs)
+      else:
+        raise ValueError("Unimplemented planning task")
+      act_pred_np = act_pred.numpy()
+      act_preds.append(act_pred_np)
+      if not is_shooting:
+        img_preds.append(img_pred.numpy())
+      # Simluate in environment
+      for j in range(len(act_pred_np)):
+        obs, reward, done, _ = env.step(act_pred_np[j])
+        total_reward += reward
+        frames.append(obs['image'])
+      obs['image'] = [obs['image']]
+      if is_goal_based:
+        break # Break if running goal-based collocation
+    end = time.time()
+    print(f"Planning time: {end - start}")
+    print("Total reward: " + str(total_reward))
+    # Save videos
+    if not config.collect_episodes:
+      imageio.mimsave(f"./frames_{config.prefix}.gif", frames, fps=60)
+      if not is_shooting:
+        img_preds = np.vstack(img_preds)
+        imageio.mimsave(f"./preds_{config.prefix}.gif", img_preds, fps=60)
+      if len(model_frames) > 0:
+        model_frames = np.vstack(model_frames)
+        imageio.mimsave(f"./model_{config.prefix}.gif", model_frames, fps=60)
+    # Execute actions in an ensemble of models
+    # act_preds = np.vstack(act_preds)
+    # np.save('actions.npy', act_preds)
+    # act_preds = np.load('actions.npy')
+    # if len(act_preds) > 0:
+    #   for i in range(config.num_ensembles):
+    #     print(f"Simulating in model {i}")
+    #     agent.load(config.logdir / f'variables{i}.pkl')
+    #     init_feat = agent.get_init_feat(init_obs)
+    #     model_frames = agent.visualize_model_preds(init_feat, tf.convert_to_tensor(act_preds))
+    #     imageio.mimsave(f"./model_e{i}_{config.prefix}.gif", model_frames, fps=60)
 
 
 if __name__ == '__main__':
