@@ -8,11 +8,95 @@ import gym
 import numpy as np
 from PIL import Image
 
+class SawyerPushXYEnv:
+
+  LOCK = threading.Lock()
+
+  def __init__(self, rand_init_goal, action_repeat):
+    from mujoco_py import MjRenderContext
+    import metaworld.envs.mujoco.sawyer_xyz as sawyer
+    with self.LOCK:
+      self._env = sawyer.SawyerPushEnvV2()
+
+    self._rand_init_goal = rand_init_goal
+    self._action_repeat = action_repeat
+    self._width = 64
+    self._size = (self._width, self._width)
+    self._action_space = gym.spaces.Box(
+        np.array([-1, -1]),
+        np.array([+1, +1]),
+    )
+
+    self._offscreen = MjRenderContext(self._env.sim, True, 0, 'egl', True)
+    self._offscreen.cam.azimuth = 205
+    self._offscreen.cam.elevation = -165
+    self._offscreen.cam.distance = 2.6
+    self._offscreen.cam.lookat[0] = 1.1
+    self._offscreen.cam.lookat[1] = 1.1
+    self._offscreen.cam.lookat[2] = -0.1
+
+
+  @property
+  def observation_space(self):
+    shape = self._size + (3,)
+    space = gym.spaces.Box(low=0, high=255, shape=shape, dtype=np.uint8)
+    goal_space = gym.spaces.Box(low=self._env.goal_low, high=self._env.goal_high)
+    return gym.spaces.Dict({'image': img_space, 'goal': goal_space})
+
+  @property
+  def action_space(self):
+    return self._action_space
+
+  def get_goal(self):
+    return self._env.goal
+
+  def close(self):
+    return self._env.close()
+
+  def reset(self):
+    with self.LOCK:
+      self._env.hand_init_pos = np.array([0, 0.4, 0.02])
+      if self._rand_init_goal:
+        # self._env.goal = np.random.uniform(
+        #     np.array([-0.3, 0.3, 0.02]),
+        #     np.array([0.3, 0.9, 0.02]),
+        #     size=(self._env.goal_space.low.size),
+        # )
+        self._env.goal = np.random.uniform(
+            self._env.goal_space.low,
+            self._env.goal_space.high,
+            size=(self._env.goal_space.low.size),
+        )
+      self._env.reset()
+    return self._get_obs()
+
+  def step(self, action):
+    total_reward = 0.0
+    action_padded = np.zeros(4)
+    action_padded[:2] = action
+    for step in range(self._action_repeat):
+      _, reward, done, info = self._env.step(action_padded)
+      total_reward += reward
+      if done:
+        break
+    obs = self._get_obs()
+    return obs, total_reward, done, info
+
+  def render(self, mode):
+    return self._env.render(mode)
+
+  def _get_obs(self):
+    self._offscreen.render(self._width, self._width, -1)
+    image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
+    goal = self.get_goal()
+    return {'image': image, 'goal': goal}
+
+
 class MetaWorld:
 
   LOCK = threading.Lock()
 
-  def __init__(self, name, action_repeat):
+  def __init__(self, name, random_init, action_repeat):
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
     domain, task = name.split('_', 1)
@@ -22,11 +106,12 @@ class MetaWorld:
       else:
         self._env = getattr(sawyer, task)()
 
+    self._random_init = random_init
     self._action_repeat = action_repeat
     self._width = 64
     self._size = (self._width, self._width)
 
-    self._offscreen = MjRenderContext(self._env.sim, True, 0, 'glfw', True)
+    self._offscreen = MjRenderContext(self._env.sim, True, 0, 'egl', True)
     self._offscreen.cam.azimuth = 205
     self._offscreen.cam.elevation = -165
     self._offscreen.cam.distance = 2.6
@@ -49,37 +134,32 @@ class MetaWorld:
 
   def reset(self):
     with self.LOCK:
-      self._env.reset()
-    return self._get_obs()
+      if self._random_init:
+        self._env.hand_init_pos = np.random.uniform(
+            self._env.hand_low,
+            self._env.hand_high,
+            size=self._env.hand_low.size
+        )
+      state = self._env.reset()
+    return self._get_obs(state)
 
   def step(self, action):
     total_reward = 0.0
     for step in range(self._action_repeat):
-      _, reward, done, info = self._env.step(action)
-      total_reward += min(reward, 100000)
+      state, reward, done, info = self._env.step(action)
+      total_reward += reward
       if done:
         break
-    obs = self._get_obs()
+    obs = self._get_obs(state)
     return obs, total_reward, done, info
 
   def render(self, mode):
     return self._env.render(mode)
 
-  def render_goal(self):
-    self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
-    self.reset()
-    action = np.zeros(self._env.action_space.low.shape)
-    self._env.step(action)
-    goal_obs = self._get_obs()
-    goal_obs['reward'] = 0.0
-    self._env.hand_init_pos = self._env.init_config['hand_init_pos']
-    self.reset()
-    return goal_obs
-
-  def _get_obs(self):
+  def _get_obs(self, state):
     self._offscreen.render(self._width, self._width, -1)
     image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
-    return {'image': image}
+    return {'image': image, 'state': state}
 
 
 
@@ -209,6 +289,51 @@ class TimeLimit:
   def reset(self):
     self._step = 0
     return self._env.reset()
+
+
+class ActionRepeat:
+
+  def __init__(self, env, amount):
+    self._env = env
+    self._amount = amount
+
+  def __getattr__(self, name):
+    return getattr(self._env, name)
+
+  def step(self, action):
+    done = False
+    total_reward = 0
+    current_step = 0
+    while current_step < self._amount and not done:
+      obs, reward, done, info = self._env.step(action)
+      total_reward += reward
+      current_step += 1
+    return obs, total_reward, done, info
+
+
+class NormalizeActions:
+
+  def __init__(self, env):
+    self._env = env
+    self._mask = np.logical_and(
+        np.isfinite(env.action_space.low),
+        np.isfinite(env.action_space.high))
+    self._low = np.where(self._mask, env.action_space.low, -1)
+    self._high = np.where(self._mask, env.action_space.high, 1)
+
+  def __getattr__(self, name):
+    return getattr(self._env, name)
+
+  @property
+  def action_space(self):
+    low = np.where(self._mask, -np.ones_like(self._low), self._low)
+    high = np.where(self._mask, np.ones_like(self._low), self._high)
+    return gym.spaces.Box(low, high, dtype=np.float32)
+
+  def step(self, action):
+    original = (action + 1) / 2 * (self._high - self._low) + self._low
+    original = np.where(self._mask, original, action)
+    return self._env.step(original)
 
 
 class RewardObs:

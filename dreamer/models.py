@@ -6,6 +6,41 @@ from tensorflow.keras.mixed_precision import experimental as prec
 
 import tools
 
+class RSSMCell(tools.Module):
+
+  def __init__(self, stoch=30, deter=200, hidden=200, act=tf.nn.elu):
+    super().__init__()
+    self._activation = act
+    self._stoch_size = stoch
+    self._deter_size = deter
+    self._hidden_size = hidden
+    self._cell = tfkl.GRUCell(self._deter_size)
+
+  def initial(self, batch_size):
+    dtype = prec.global_policy().compute_dtype
+    return dict(
+        mean=tf.zeros([batch_size, self._stoch_size], dtype),
+        std=tf.zeros([batch_size, self._stoch_size], dtype),
+        stoch=tf.zeros([batch_size, self._stoch_size], dtype),
+        deter=self._cell.get_initial_state(None, batch_size, dtype))
+
+  def get_dist(self, state):
+    return tfd.MultivariateNormalDiag(state['mean'], state['std'])
+
+  @tf.function
+  def img_step(self, prev_state, prev_action):
+    x = tf.concat([prev_state['stoch'], prev_action], -1)
+    x = self.get('img1', tfkl.Dense, self._hidden_size, self._activation)(x)
+    x, deter = self._cell(x, [prev_state['deter']])
+    deter = deter[0]
+    x = self.get('img2', tfkl.Dense, self._hidden_size, self._activation)(x)
+    x = self.get('img3', tfkl.Dense, 2 * self._stoch_size, None)(x)
+    mean, std = tf.split(x, 2, -1)
+    std = tf.nn.softplus(std) + 0.1
+    stoch = self.get_dist({'mean': mean, 'std': std}).sample()
+    prior = {'mean': mean, 'std': std, 'stoch': stoch, 'deter': deter}
+    return prior
+
 
 class RSSM(tools.Module):
 
