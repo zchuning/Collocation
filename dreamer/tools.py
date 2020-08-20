@@ -64,6 +64,8 @@ def video_summary(name, video, step=None, fps=20):
   name = name if isinstance(name, str) else name.decode('utf-8')
   if np.issubdtype(video.dtype, np.floating):
     video = np.clip(255 * video, 0, 255).astype(np.uint8)
+  if len(video.shape) == 4:
+    video = video[None]
   B, T, H, W, C = video.shape
   try:
     frames = video.transpose((1, 2, 0, 3, 4)).reshape((T, H, B * W, C))
@@ -76,6 +78,16 @@ def video_summary(name, video, step=None, fps=20):
     print('GIF summaries require ffmpeg in $PATH.', e)
     frames = video.transpose((0, 2, 1, 3, 4)).reshape((1, B * H, T * W, C))
     tf.summary.image(name + '/grid', frames, step)
+    
+
+def image_summary(name, image, step=None):
+  name = name if isinstance(name, str) else name.decode('utf-8')
+  if np.issubdtype(image.dtype, np.floating):
+    image = np.clip(255 * image, 0, 255).astype(np.uint8)
+  if len(image.shape) == 4:
+    B, H, W, C = image.shape
+    image = image.reshape((1, B * H, W, C))
+  tf.summary.image(name, image, step)
 
 
 def encode_gif(frames, fps):

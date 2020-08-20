@@ -50,6 +50,10 @@ class RSSM(tools.Module):
 
   def get_feat(self, state):
     return tf.concat([state['stoch'], state['deter']], -1)
+  
+  def from_feat(self, feat):
+    state = {'stoch': feat[..., :self._stoch_size], 'deter': feat[..., self._stoch_size:]}
+    return state
 
   def get_dist(self, state):
     return tfd.MultivariateNormalDiag(state['mean'], state['std'])
