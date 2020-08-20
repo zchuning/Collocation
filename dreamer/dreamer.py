@@ -59,6 +59,7 @@ def define_config():
   config.pcont_scale = 10.0
   config.weight_decay = 0.0
   config.weight_decay_pattern = r'.*'
+  config.inverse_model = False
   # Training.
   config.batch_size = 50
   config.batch_length = 50
@@ -160,6 +161,9 @@ class Dreamer(tools.Module):
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
       likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if self._c.inverse_model:
+        inverse_pred = self._inverse(tf.concat((feat[:, :-1], feat[:, 1:]), -1))
+        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -215,6 +219,10 @@ class Dreamer(tools.Module):
         self._c.stoch_size, self._c.deter_size, self._c.deter_size)
     self._decode = models.ConvDecoder(self._c.cnn_depth, cnn_act)
     self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
+    if self._c.inverse_model:
+      self._inverse = models.ActionDecoder(
+        self._actdim, 4, self._c.num_units, self._c.action_dist,
+        init_std=self._c.action_init_std, act=act)
     if self._c.pcont:
       self._pcont = models.DenseDecoder(
           (), 3, self._c.num_units, 'binary', act=act)
@@ -223,6 +231,8 @@ class Dreamer(tools.Module):
         self._actdim, 4, self._c.num_units, self._c.action_dist,
         init_std=self._c.action_init_std, act=act)
     model_modules = [self._encode, self._dynamics, self._decode, self._reward]
+    if self._c.inverse_model:
+      model_modules.append(self._inverse)
     if self._c.pcont:
       model_modules.append(self._pcont)
     Optimizer = functools.partial(
