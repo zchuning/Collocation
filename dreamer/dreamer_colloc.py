@@ -220,7 +220,7 @@ class DreamerColloc(Dreamer):
     print(f"Final average reward: {rewards[-1] / horizon}")
     if save_images:
       self.logger.log_graph(
-        'losses', {f'rewards/{i}': rewards, f'dynamics/{i}': dyn_loss, f'action_violation/{i}': act_loss})
+        'losses', {f'rewards/{step}': rewards, f'dynamics/{step}': dyn_loss, f'action_violation/{step}': act_loss})
       self.visualize_colloc(img_pred, act_pred, init_feat)
     return act_pred, img_pred, feat_pred
 
