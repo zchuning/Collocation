@@ -160,6 +160,7 @@ class DreamerColloc(Dreamer):
 
     # Get initial states
     latent = self._dynamics.initial(len(obs['image']))
+    # TODO this is wrong for PM since 0,0 is not a noop. Check whether the model is trained correctly with this.
     action = tf.zeros((len(obs['image']), self._actdim), self._float)
     embedding = self._encode(preprocess(obs, self._c))
     latent, _ = self._dynamics.obs_step(latent, action, embedding)
@@ -173,7 +174,7 @@ class DreamerColloc(Dreamer):
     # Gradient descent parameters
     dyn_loss, act_loss, rewards = [], [], []
     dyn_loss_frame = []
-    opt = tf.keras.optimizers.Adam(learning_rate=0.05)
+    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
     lambdas = tf.ones(horizon)
     nus = tf.ones([horizon, self._actdim])
     # Gradient descent loop
@@ -187,11 +188,10 @@ class DreamerColloc(Dreamer):
         # Compute reward
         reward = tf.reduce_sum(self._reward(feats).mode())
         # Compute dynamics loss
-        stoch = tf.expand_dims(feats[:-1, :self._c.stoch_size], 0)
-        deter = tf.expand_dims(feats[:-1, self._c.stoch_size:], 0)
-        states = {'stoch': stoch, 'deter': deter}
+        states = self._dynamics.from_feat(feats[None, :-1])
         priors = self._dynamics.img_step(states, actions)
         feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
+        # TODO this is NLL, not log_prob
         log_prob_frame = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
         log_prob = tf.reduce_sum(lambdas * log_prob_frame)
         actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
@@ -482,9 +482,10 @@ def colloc_simulate(agent, config, env, save_images=True):
       # TODO mark beginning in the gif
       agent.logger.log_video("plan", img_preds)
     agent.logger.log_video("execution", frames)
+  print("Total reward: " + str(total_reward))
+  agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
   import pdb; pdb.set_trace()
   agent._reward(feat_pred).mean()
-  print("Total reward: " + str(total_reward))
   
   return total_reward
   
