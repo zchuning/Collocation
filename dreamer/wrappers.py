@@ -161,6 +161,21 @@ class MetaWorld:
     image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
     return {'image': image, 'state': state}
 
+  def render_goal(self):
+    obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
+    self._env.init_config['obj_init_pos'] = self._env.goal
+    self._env.obj_init_pos = self._env.goal
+    self._env.hand_init_pos = self._env.goal
+    self.reset()
+    action = np.zeros(self._env.action_space.low.shape)
+    state, reward, done, info = self._env.step(action)
+    goal_obs = self._get_obs(state)
+    goal_obs['reward'] = 0.0
+    self._env.hand_init_pos = self._env.init_config['hand_init_pos']
+    self._env.init_config['obj_init_pos'] = obj_init_pos_temp
+    self._env.obj_init_pos = self._env.init_config['obj_init_pos']
+    self.reset()
+    return goal_obs
 
 
 class DeepMindControl:

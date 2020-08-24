@@ -88,10 +88,10 @@ def define_config():
   config.planning_task = 'colloc_cem'
   config.planning_horizon = 10
   config.mpc_steps = 10
-  config.cem_steps = 60
+  config.cem_steps = 100
   config.cem_batch_size = 10000
   config.cem_elite_ratio = 0.01
-  config.gd_steps = 2000
+  config.gd_steps = 1000
   config.gd_lr = 0.05
   config.lambda_int = 50
   config.lambda_lr = 1
@@ -103,7 +103,7 @@ def define_config():
   config.num_ensembles = 5
   # Collect episodes
   config.collect_episodes = False
-  config.num_episodes = 100
+  config.num_episodes = 1
   return config
 
 
@@ -258,7 +258,7 @@ class Dreamer(tools.Module):
     lambdas, nus = tf.ones(horizon), tf.ones([horizon, self._actdim])
     # Gradient descent loop
     for i in range(self._c.gd_steps):
-      print("Gradient descent step {0}".format(i + 1))
+      # print("Gradient descent step {0}".format(i + 1))
       with tf.GradientTape() as g:
         g.watch(t)
         tr = tf.reshape(t, [horizon, -1])
@@ -291,7 +291,7 @@ class Dreamer(tools.Module):
       opt.apply_gradients([(grad, t)])
       if i % self._c.lambda_int == self._c.lambda_int - 1:
         lambdas += self._c.lambda_lr * log_prob_seq
-        nus += self._c.nu_lr * (actions_viol)
+        nus += self._c.nu_lr * actions_viol
         print(f"Lambdas: {lambdas}\n Nus: {nus}")
       dyn_loss.append(tf.reduce_sum(log_prob_seq))
       act_loss.append(tf.reduce_sum(actions_viol))
@@ -331,7 +331,7 @@ class Dreamer(tools.Module):
 
     # CEM loop:
     dyn_loss, rewards = [], []
-    gamma = 0.00001
+    # gamma = 0.00001
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     for i in range(self._c.cem_steps):
@@ -731,98 +731,6 @@ def summarize_episode(episode, config, datadir, writer, prefix):
     [tf.summary.scalar('sim/' + k, v) for k, v in metrics]
     if prefix == 'test':
       tools.video_summary(f'sim/{prefix}/video', episode['image'][None])
-
-def ensemble_loss(c, agents, actions, feats, lambdas, nus):
-  rew_dists, stoch_means, stoch_stds, deter = [], [], [], []
-  states = {'stoch': tf.expand_dims(feats[:-1, :c.stoch_size], 0),
-            'deter': tf.expand_dims(feats[:-1, c.stoch_size:], 0)}
-  for agent in agents:
-    reward = agent.compute_rewards(feats)
-    rew_dists.append(reward)
-    prior = agent.forward_dynamics(states, actions)
-    stoch_means.append(tf.squeeze(prior['mean']))
-    stoch_stds.append(tf.squeeze(prior['std']))
-    deter.append(prior['deter'])
-
-  mix = [[1.0 / c.num_ensembles] * c.num_ensembles] * feats.shape[0]
-  reward_mix = tfd.Mixture(cat=tfd.Categorical(probs=mix), components=rew_dists)
-  # TODO: change to mode
-  reward = tf.reduce_sum(reward_mix.mean())
-  stoch_dists = tfd.MultivariateNormalDiag(
-      tf.transpose(stoch_means, [1, 0, 2]),
-      tf.transpose(stoch_stds, [1, 0, 2])
-  )
-  stoch_mix = tfd.MixtureSameFamily(
-      mixture_distribution=tfd.Categorical(probs=mix[:-1]),
-      components_distribution=stoch_dists
-  )
-  # TODO: change to mode
-  stoch_mode = tf.reshape(stoch_mix.mean(), [1, -1, c.stoch_size])
-  deter_mean = tf.reduce_mean(deter, axis=0)
-  feats_pred = tf.squeeze(tf.concat([stoch_mode, deter_mean], axis=-1))
-
-  dyn_viol = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
-  dyn_cstr = tf.reduce_sum(lambdas * dyn_viol)
-  act_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
-  act_cstr = tf.reduce_sum(nus * act_viol)
-  loss = - reward + c.dyn_loss_scale * dyn_cstr + c.act_loss_scale * act_cstr
-  return loss, dyn_viol, act_viol, reward
-
-
-def collocation_ensemble(c, actspace, agents, obs):
-  float_t = prec.global_policy().compute_dtype
-  feat_size = c.stoch_size + c.deter_size
-  actdim = actspace.n if hasattr(actspace, 'n') else actspace.shape[0]
-  var_len = (actdim + feat_size) * c.planning_horizon
-
-  init_feat = agents[0].get_init_feat(obs)
-  means, stds = tf.zeros(var_len, dtype=float_t), tf.ones(var_len, dtype=float_t)
-  t = tf.Variable(tfd.MultivariateNormalDiag(means, stds).sample())
-  opt = tf.keras.optimizers.Adam(learning_rate=c.gd_lr)
-  # Gradient descent parameters
-  dyn_loss, act_loss, rewards = [], [], []
-  lambdas, nus = tf.ones(c.planning_horizon), tf.ones([c.planning_horizon, actdim])
-  # Gradient descent loop
-  for i in range(c.gd_steps):
-    print("Gradient descent step {0}".format(i + 1))
-    with tf.GradientTape() as g:
-      g.watch(t)
-      tr = tf.reshape(t, [c.planning_horizon, -1])
-      actions = tf.expand_dims(tr[:, :actdim], 0)
-      feats = tf.concat([init_feat, tr[:, actdim:]], axis=0)
-      loss, dyn_viol, act_viol, reward = ensemble_loss(c, agents, actions, feats, lambdas, nus)
-    grad = g.gradient(loss, t)
-    opt.apply_gradients([(grad, t)])
-    if i % c.lambda_int == c.lambda_int - 1:
-      lambdas += c.lambda_lr * dyn_viol
-      nus += c.nu_lr * act_viol
-      print(f"Lambdas: {lambdas}\n Nus: {nus}")
-    dyn_loss.append(tf.reduce_sum(dyn_viol))
-    act_loss.append(tf.reduce_sum(act_viol))
-    rewards.append(reward)
-
-  print(f"Final average dynamics loss: {dyn_loss[-1] / c.planning_horizon}")
-  print(f"Final average actions loss: {act_loss[-1] / c.planning_horizon}")
-  print(f"Final average reward: {rewards[-1] / c.planning_horizon}")
-  tr = tf.reshape(t, [c.planning_horizon, -1])
-  act_pred = tr[:min(c.planning_horizon, c.mpc_steps), :actdim]
-  img_pred = agents[0].decode_feats(tr[:min(c.planning_horizon, c.mpc_steps), actdim:])
-
-  # Visualize model forward predictions
-  # model_imgs = self.visualize_model_preds(init_feat, act_pred)
-  if c.visualize:
-    # self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
-    import matplotlib.pyplot as plt
-    plt.title("Learning Curves")
-    plt.plot(range(len(rewards)), rewards, label='Rewards')
-    plt.plot(range(len(dyn_loss)), dyn_loss, label='Dynamics Loss')
-    plt.plot(range(len(act_loss)), act_loss, label='Action Loss')
-    plt.legend()
-    plt.savefig(f"./lr_{c.prefix}.jpg")
-    colloc_imgs = img_pred.numpy().reshape(-1, 64, 3)
-    imageio.imwrite(f"./colloc_imgs_{c.prefix}.jpg", colloc_imgs)
-    sys.exit()
-  return act_pred, img_pred #, model_imgs
 
 
 def main(config):
