@@ -162,7 +162,7 @@ class Dreamer(tools.Module):
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
       likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
-        inverse_pred = self._inverse(tf.concat((feat[:, :-1], feat[:, 1:]), -1))
+        inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)

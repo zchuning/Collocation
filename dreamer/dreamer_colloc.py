@@ -156,35 +156,23 @@ class DreamerColloc(Dreamer):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     feat_size = self._c.stoch_size + self._c.deter_size
-    var_len = (self._actdim + feat_size) * horizon
-
-    # Get initial states
-    latent = self._dynamics.initial(len(obs['image']))
-    # TODO this is wrong for PM since 0,0 is not a noop. Check whether the model is trained correctly with this.
-    action = tf.zeros((len(obs['image']), self._actdim), self._float)
-    embedding = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embedding)
-    init_feat = self._dynamics.get_feat(latent)
+    var_len_step = self._actdim + feat_size
 
     # Initialize decision variables
-    means = tf.zeros(var_len, dtype=self._float)
-    stds = tf.ones(var_len, dtype=self._float)
-    t = tf.Variable(tfd.MultivariateNormalDiag(means, stds).sample())
-
-    # Gradient descent parameters
+    init_feat = self.get_init_feat(obs)
+    t = tf.Variable(tf.random.normal((horizon, var_len_step), dtype=self._float))
+    lambdas = tf.ones(horizon)
+    nus = tf.ones([horizon, self._actdim])
     dyn_loss, act_loss, rewards = [], [], []
     dyn_loss_frame = []
     opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
-    lambdas = tf.ones(horizon)
-    nus = tf.ones([horizon, self._actdim])
     # Gradient descent loop
     for i in range(self._c.gd_steps):
       print("Gradient descent step {0}".format(i + 1))
       with tf.GradientTape() as g:
         g.watch(t)
-        tr = tf.reshape(t, [horizon, -1])
-        actions = tf.expand_dims(tr[:, :self._actdim], 0)
-        feats = tf.concat([init_feat, tr[:, self._actdim:]], axis=0)
+        actions = tf.expand_dims(t[:, :self._actdim], 0)
+        feats = tf.concat([init_feat, t[:, self._actdim:]], axis=0)
         # Compute reward
         reward = tf.reduce_sum(self._reward(feats).mode())
         # Compute dynamics loss
@@ -211,9 +199,76 @@ class DreamerColloc(Dreamer):
         print(tf.reduce_mean(log_prob_frame, axis=0))
         print(f"Lambdas: {lambdas}\n Nus: {nus}")
 
-    tr = tf.reshape(t, [horizon, -1])
-    act_pred = tr[:min(horizon, mpc_steps), :self._actdim]
-    feat_pred = tr[:min(horizon, mpc_steps), self._actdim:]
+    act_pred = t[:min(horizon, mpc_steps), :self._actdim]
+    feat_pred = t[:min(horizon, mpc_steps), self._actdim:]
+    img_pred = self._decode(feat_pred).mode()
+    print(f"Final average dynamics loss: {dyn_loss[-1] / horizon}")
+    print(f"Final average action violation: {act_loss[-1] / horizon}")
+    print(f"Final average reward: {rewards[-1] / horizon}")
+    if save_images:
+      self.logger.log_graph(
+        'losses', {f'rewards/{step}': rewards, f'dynamics/{step}': dyn_loss, f'action_violation/{step}': act_loss})
+      self.visualize_colloc(img_pred, act_pred, init_feat)
+    return act_pred, img_pred, feat_pred
+
+  def get_init_feat(self, obs):
+    latent = self._dynamics.initial(len(obs['image']))
+    # TODO this is wrong for PM since 0,0 is not a noop. Check whether the model is trained correctly with this.
+    action = tf.zeros((len(obs['image']), self._actdim), self._float)
+    embedding = self._encode(preprocess(obs, self._c))
+    latent, _ = self._dynamics.obs_step(latent, action, embedding)
+    init_feat = self._dynamics.get_feat(latent)
+    return init_feat
+
+  def collocation_gd_inverse_model(self, obs, save_images, step):
+    horizon = self._c.planning_horizon
+    mpc_steps = self._c.mpc_steps
+    feat_size = self._c.stoch_size + self._c.deter_size
+    var_len_step = feat_size
+
+    # Initialize decision variables
+    init_feat = self.get_init_feat(obs)
+    t = tf.Variable(tf.random.normal((horizon, var_len_step), dtype=self._float))
+    lambdas = tf.ones(horizon)
+    nus = tf.ones([horizon, self._actdim])
+    dyn_loss, act_loss, rewards = [], [], []
+    dyn_loss_frame = []
+    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
+    # Gradient descent loop
+    for i in range(self._c.gd_steps):
+      print("Gradient descent step {0}".format(i + 1))
+      with tf.GradientTape() as g:
+        g.watch(t)
+        feats = tf.concat([init_feat, t], axis=0)
+        actions = self._inverse(feats[:-1], feats[1:]).mean()[None]
+        # Compute reward
+        reward = tf.reduce_sum(self._reward(feats).mode())
+        # Compute dynamics loss
+        states = self._dynamics.from_feat(feats[None, :-1])
+        priors = self._dynamics.img_step(states, actions)
+        feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
+        # TODO this is NLL, not log_prob
+        log_prob_frame = tf.reduce_sum(tf.square(feats_pred - feats[1:]), axis=1)
+        log_prob = tf.reduce_sum(lambdas * log_prob_frame)
+        actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
+        actions_constr = tf.reduce_sum(nus * actions_viol)
+        fitness = - reward + self._c.dyn_loss_scale * log_prob + self._c.act_loss_scale * actions_constr
+      print(f"Frame-wise log probability: {log_prob_frame}")
+      print(f"Reward: {reward}, dynamics: {log_prob}")
+      grad = g.gradient(fitness, t)
+      opt.apply_gradients([(grad, t)])
+      dyn_loss.append(tf.reduce_sum(log_prob_frame))
+      dyn_loss_frame.append(log_prob_frame)
+      act_loss.append(tf.reduce_sum(actions_viol))
+      rewards.append(reward)
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        lambdas += self._c.lambda_lr * log_prob_frame
+        nus += self._c.nu_lr * (actions_viol)
+        print(tf.reduce_mean(log_prob_frame, axis=0))
+        print(f"Lambdas: {lambdas}\n Nus: {nus}")
+
+    feat_pred = t[:min(horizon, mpc_steps)]
+    act_pred = self._inverse(tf.concat([init_feat, feat_pred[:-1]], axis=0), feat_pred).mean()
     img_pred = self._decode(feat_pred).mode()
     print(f"Final average dynamics loss: {dyn_loss[-1] / horizon}")
     print(f"Final average action violation: {act_loss[-1] / horizon}")
@@ -233,11 +288,7 @@ class DreamerColloc(Dreamer):
     batch = self._c.cem_batch_size
 
     # Get initial states
-    latent = self._dynamics.initial(len(obs['image']))
-    action = tf.zeros((len(obs['image']), self._actdim), self._float)
-    embedding = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embedding)
-    init_feat = self._dynamics.get_feat(latent)
+    init_feat = self.get_init_feat(obs)
 
     lambdas = tf.ones(horizon)
     def eval_fitness(t):
@@ -307,11 +358,7 @@ class DreamerColloc(Dreamer):
     batch = self._c.cem_batch_size
 
     # Get initial states
-    latent = self._dynamics.initial(len(obs['image']))
-    action = tf.zeros((len(obs['image']), self._actdim), self._float)
-    embedding = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embedding)
-    init_feat = self._dynamics.get_feat(latent)
+    init_feat = self.get_init_feat(obs)
 
     def eval_fitness(t):
       init_feats = tf.tile(init_feat, [batch, 1])
@@ -363,6 +410,9 @@ class DreamerColloc(Dreamer):
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
       likes.reward = tf.reduce_mean(reward_pred.log_prob(tf.cast(data['reward'], tf.float32)))
+      if self._c.inverse_model:
+        inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
+        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(tf.cast(data['action'], tf.float32)[:, :-1]))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -451,7 +501,10 @@ def colloc_simulate(agent, config, env, save_images=True):
     if pt == 'colloc_cem':
       act_pred, img_pred = agent.collocation_cem(obs)
     elif pt == 'colloc_gd':
-      act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
+      if config.inverse_model:
+        act_pred, img_pred, feat_pred = agent.collocation_gd_inverse_model(obs, save_images, i)
+      else:
+        act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting':

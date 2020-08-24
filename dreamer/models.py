@@ -189,9 +189,9 @@ class ActionDecoder(tools.Module):
     self._init_std = init_std
     self._mean_scale = mean_scale
 
-  def __call__(self, features):
+  def __call__(self, *args):
     raw_init_std = np.log(np.exp(self._init_std) - 1)
-    x = features
+    x = tf.concat(args, -1)
     for index in range(self._layers):
       x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
     if self._dist == 'tanh_normal':
