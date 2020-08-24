@@ -161,7 +161,6 @@ class Dreamer(tools.Module):
   def decode_feats(self, feats):
     return self._decode(feats).mode()
 
-
   def get_init_feat(self, obs):
     latent = self._dynamics.initial(len(obs['image']))
     action = tf.zeros((len(obs['image']), self._actdim), self._float)
@@ -185,55 +184,135 @@ class Dreamer(tools.Module):
     return model_imgs
 
   def collocation_so(self, obs, goal_obs):
-    horizon = self._c.planning_horizon
-    init_feat = self.get_init_feat(obs)
+    hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
-    var_len = (feat_size + self._actdim) * horizon
+    var_len = (feat_size + self._actdim) * hor
     num_iter = 100
     damping = 1e-3
 
+    init_feat = self.get_init_feat(obs)
+    goal_feat = self.get_init_feat(goal_obs)
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     t = tfd.MultivariateNormalDiag(means, stds).sample()
-    plan = tf.reshape(t, [1, horizon, -1])
+    # Set the first state to be the observed initial state
+    t = tf.concat([tf.squeeze(init_feat), t[feat_size:]], 0)
+    plan = tf.reshape(t, [1, hor, -1])
 
-    def pair_residual_func_body(x_a, x_b, bs, goal, reward_res_weight=0.001):
+    def pair_residual_func_body(x_a, x_b, bs, goal, rew_res_weight=0.001):
       states = {'stoch': tf.reshape(x_a[:, :self._c.stoch_size], [1, bs, -1]),
                 'deter': tf.reshape(x_a[:, self._c.stoch_size:-self._actdim], [1, bs, -1])}
-      actions = tf.reshape(x_a[:, -self._actdim:], (1, bs, -1))
+      actions = tf.reshape(x_a[:, -self._actdim:], [1, bs, -1])
       prior = self._dynamics.img_step(states, actions)
       x_b_pred = tf.reshape(tf.concat([prior['mean'], prior['deter']], -1), [bs, -1])
       dyn_res = x_b[:, :-self._actdim] - x_b_pred
       act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
-      rew_res = reward_res_weight * (x_b[:, :-self._actdim] - goal)
+      rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
       objective = tf.concat([dyn_res, act_res, rew_res], 1)
       return objective
 
-    init_feat = self.get_init_feat(obs)
-    goal_feat = self.get_init_feat(goal_obs)
     init_residual_func = \
-      lambda x : x - tf.concat([x[:, -self._actdim:], init_feat], 1)
+      lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, horizon-1, goal_feat, 0.001)
+      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor-1, goal_feat, 0.001)
 
     # Run second-order solver
-    for t in range(num_iter):
+    dyn_losses, rewards = [], []
+    for i in range(num_iter):
+      start = time.time()
+      # Run Gauss-Newton step
       plan = solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
-    plan_res = tf.reshape(plan, [horizon, -1])
-    feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
-
-    # Record dynamics loss and reward
-    reward = tf.reduce_sum(self._reward(feat_preds).mode())
-    stoch = tf.expand_dims(feat_preds[:-1, :self._c.stoch_size], 0)
-    deter = tf.expand_dims(feat_preds[:-1, self._c.stoch_size:], 0)
-    actions = tf.expand_dims(act_preds[:-1], 0)
-    priors = self._dynamics.img_step({'stoch': stoch, 'deter': deter}, actions)
-    priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-    dyn_loss = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]))
+      end = time.time()
+      print(f"Single Gauss-Newton step time: {end - start}")
+      # Compute and record dynamics loss and reward
+      plan_res = tf.reshape(plan, [hor, -1])
+      feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      reward = tf.reduce_sum(self._reward(feat_preds).mode())
+      stoch = tf.expand_dims(feat_preds[:-1, :self._c.stoch_size], 0)
+      deter = tf.expand_dims(feat_preds[:-1, self._c.stoch_size:], 0)
+      actions = tf.expand_dims(act_preds[:-1], 0)
+      priors = self._dynamics.img_step({'stoch': stoch, 'deter': deter}, actions)
+      priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
+      dyn_loss = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]))
+      dyn_losses.append(dyn_loss)
+      rewards.append(reward)
 
     print(f"Reward: {reward}, dynamics loss: {dyn_loss}")
-    act_preds = act_preds[:min(horizon, self._c.mpc_steps)]
-    img_preds = self._decode(feat_preds[:min(horizon, self._c.mpc_steps)]).mode()
+    act_preds = act_preds[:min(hor, self._c.mpc_steps)]
+    img_preds = self._decode(feat_preds[:min(hor, self._c.mpc_steps)]).mode()
+    model_imgs = self.visualize_model_preds(init_feat, act_preds)
+    if self._c.visualize:
+      import matplotlib.pyplot as plt
+      plt.title("Learning Curves")
+      plt.plot(range(len(rewards)), tf.math.log(rewards), label='Rewards')
+      plt.plot(range(len(dyn_losses)), tf.math.log(dyn_losses), label='Dynamics Loss')
+      plt.legend()
+      plt.savefig(f"./lr_{self._c.prefix}.jpg")
+      colloc_imgs = img_preds.numpy().reshape(-1, 64, 3)
+      imageio.imwrite(f"./colloc_imgs_{self._c.prefix}.jpg", colloc_imgs)
+      # sys.exit()
+    return act_preds, img_preds, model_imgs
+
+  def collocation_so_custom(self, obs, goal_obs):
+    # This optimizer is not numerically stable and does not solve collocation
+    hor = self._c.planning_horizon
+    init_feat = self.get_init_feat(obs)
+    feat_size = self._c.stoch_size + self._c.deter_size
+    var_len = (feat_size + self._actdim) * hor
+    num_iter = 100
+    damping = 1e-3
+    lr = 1e-3
+
+    means = tf.zeros(var_len, dtype=self._float)
+    stds = tf.ones(var_len, dtype=self._float)
+    x = tfd.MultivariateNormalDiag(means, stds).sample()
+    init_feat = self.get_init_feat(obs)
+    goal_feat = self.get_init_feat(goal_obs)
+    lambdas, nus = tf.ones(hor), tf.ones([hor, self._actdim])
+
+    def residual_func(t):
+      with tf.GradientTape() as g:
+        g.watch(t)
+        tr = tf.reshape(t, [hor, -1])
+        feats = tf.concat([init_feat, tr[:, self._actdim:]], axis=0)
+        actions = tf.reshape(tr[:, :self._actdim], [1, hor, -1])
+        # Reward residual
+        # TODO: upweight the one-frame residual; compute residual for all states instead of the last state
+        rew_res = tf.reduce_sum(feats[-1] - goal_feat)
+        # Dynamics residual
+        stoch = tf.reshape(feats[:-1, :self._c.stoch_size], [1, hor, -1])
+        deter = tf.reshape(feats[:-1, self._c.stoch_size:], [1, hor, -1])
+        priors = self._dynamics.img_step({'stoch': stoch, 'deter': deter}, actions)
+        feats_pred = tf.squeeze(tf.concat([priors['mean'], priors['deter']], -1))
+        dyn_res_t = tf.reduce_sum(tf.square(feats_pred - feats[1:]), 1)
+        dyn_res = tf.reduce_sum(lambdas * dyn_res_t)
+        # Action residual
+        act_res_t = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
+        act_res = tf.reduce_sum(nus * act_res_t)
+        residual = tf.concat([[rew_res], [dyn_res], [act_res]], 0)
+      J = g.jacobian(residual, t)
+      return residual, J, dyn_res_t, act_res_t
+
+    # Main optimization loop
+    for i in range(num_iter):
+      start = time.time()
+      r, J, dyn_viol, act_viol = residual_func(x)
+      gradient_vec = 2.0 * tf.linalg.matmul(J, tf.expand_dims(r, 1), transpose_a=True)
+      id = damping * tf.eye(J.shape[1])
+      gauss_newton_mat = id + 2.0 * tf.linalg.matmul(J, J, transpose_a=True)
+      dx = tf.linalg.solve(gauss_newton_mat, gradient_vec)
+      x -= lr * tf.squeeze(dx)
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        lambdas += self._c.lambda_lr * dyn_viol
+        nus += self._c.nu_lr * act_viol
+      end = time.time()
+      print(f"Time taken for one GN step: {end - start}")
+
+    # Obtain predictions
+    x_res = tf.reshape(x, [hor, -1])
+    feat_preds, act_preds = tf.split(x_res, [feat_size, self._actdim], 1)
+    act_preds = act_preds[:min(hor, self._c.mpc_steps)]
+    img_preds = self._decode(feat_preds[:min(hor, self._c.mpc_steps)]).mode()
     return act_preds, img_preds
 
   @tf.function
@@ -505,7 +584,7 @@ def main(config):
     else:
       env = wrappers.MetaWorld(task, False, config.action_repeat)
   else:
-    raise ValueError("Unsuported environment")
+    raise ValueError("Unsupported environment")
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
   if config.collect_episodes:
     callbacks = []
@@ -554,7 +633,8 @@ def main(config):
         act_pred, img_pred, model_imgs = agent.collocation_gd(obs)
         model_frames.append(model_imgs)
       elif pt == 'colloc_second_order':
-        act_pred, img_pred = agent.collocation_so(obs, goal_obs)
+        act_pred, img_pred, model_imgs = agent.collocation_so(obs, goal_obs)
+        model_frames.append(model_imgs)
       else:
         raise ValueError("Unimplemented planning task")
       act_pred_np = act_pred.numpy()
