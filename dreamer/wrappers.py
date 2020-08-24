@@ -133,8 +133,8 @@ class MetaWorld(DreamerEnv):
     self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
     self.reset()
     action = np.zeros(self._env.action_space.low.shape)
-    self._env.step(action)
-    goal_obs = self._get_obs()
+    state, _, _, _ = self._env.step(action)
+    goal_obs = self._get_obs(state)
     goal_obs['reward'] = 0.0
     self._env.hand_init_pos = self._env.init_config['hand_init_pos']
     self.reset()

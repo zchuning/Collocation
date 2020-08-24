@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
 from blox.utils import AverageMeter
+from blox.utils import timing
 import time
 
 tf.get_logger().setLevel('ERROR')
@@ -30,8 +31,8 @@ import tools
 import wrappers
 from dreamer import Dreamer, preprocess, make_bare_env
 import dreamer
+import gn_solver
 from utils import logging
-from vis import npy2gif
 
 
 def define_config():
@@ -68,6 +69,15 @@ class DreamerColloc(Dreamer):
     else:
       self.logger = logging.DiskLogger(config.logdir_colloc)
 
+  def compute_rewards(self, feats):
+    return self._reward(feats)
+
+  def forward_dynamics(self, states, actions):
+    return self._dynamics.img_step(states, actions)
+
+  def decode_feats(self, feats):
+    return self._decode(feats).mode()
+
   def visualize_colloc(self, img_pred, act_pred, init_feat):
     # Use actions to predict trajectory
     curr_state = self._dynamics.from_feat(init_feat)
@@ -80,6 +90,68 @@ class DreamerColloc(Dreamer):
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
     self.logger.log_video("model", model_imgs)
 
+  def collocation_so(self, obs, goal_obs, save_images, step):
+    hor = self._c.planning_horizon
+    feat_size = self._c.stoch_size + self._c.deter_size
+    var_len_step = feat_size + self._actdim
+    damping = 1e-3
+
+    init_feat = self.get_init_feat(obs)
+    goal_feat = self.get_init_feat(goal_obs)
+    plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
+    # Set the first state to be the observed initial state
+    plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
+    plan = tf.reshape(plan, [1, hor + 1, var_len_step])
+
+    def pair_residual_func_body(x_a, x_b, bs, goal, rew_res_weight=0.001):
+      actions = x_a[:, -self._actdim:][None]
+      feats = x_a[:, :-self._actdim][None]
+      states = self._dynamics.from_feat(feats)
+      prior = self._dynamics.img_step(states, actions)
+      x_b_pred = tf.concat([prior['mean'], prior['deter']], -1)[0]
+      dyn_res = x_b[:, :-self._actdim] - x_b_pred
+      act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
+      rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
+      objective = tf.concat([dyn_res, act_res, rew_res], 1)
+      return objective
+
+    init_residual_func = \
+      lambda x : (x[:, :-self._actdim] - init_feat) * 1000
+    pair_residual_func = \
+      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor, goal_feat, 0.001)
+
+    # Run second-order solver
+    dyn_losses, rewards, act_losses = [], [], []
+    for i in range(self._c.gd_steps):
+      # Run Gauss-Newton step
+      with timing("Single Gauss-Newton step time: "):
+        plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
+      # Compute and record dynamics loss and reward
+      plan_res = tf.reshape(plan, [hor+1, -1])
+      feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      reward = tf.reduce_sum(self._reward(feat_preds).mode())
+      states = self._dynamics.from_feat(feat_preds[None, :-1])
+      priors = self._dynamics.img_step(states, act_preds[None, :-1])
+      priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
+      dyn_loss = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]))
+      act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds) - 1, 0, np.inf))
+      dyn_losses.append(dyn_loss)
+      rewards.append(reward)
+      act_losses.append(act_loss)
+
+    act_preds = act_preds[:min(hor, self._c.mpc_steps)]
+    feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
+    img_preds = self._decode(feat_preds).mode()
+    print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
+    print(f"Final average action violation: {act_losses[-1] / hor}")
+    print(f"Final average reward: {rewards[-1] / hor}")
+    if save_images:
+      self.logger.log_graph('losses', {f'rewards/{step}': rewards,
+                                       f'dynamics/{step}': dyn_losses,
+                                       f'action_violation/{step}': act_losses})
+      self.visualize_colloc(img_preds, act_preds, init_feat)
+    return act_preds, img_preds, feat_preds
+  
   def collocation_goal(self, init, goal, optim):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
@@ -505,6 +577,8 @@ def colloc_simulate(agent, config, env, save_images=True):
         act_pred, img_pred, feat_pred = agent.collocation_gd_inverse_model(obs, save_images, i)
       else:
         act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
+    elif pt == 'colloc_second_order':
+      act_pred, img_pred, feat_pred = agent.collocation_so(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting':
