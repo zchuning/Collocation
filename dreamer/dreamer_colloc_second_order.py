@@ -186,7 +186,7 @@ class Dreamer(tools.Module):
   def collocation_so(self, obs, goal_obs):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
-    var_len = (feat_size + self._actdim) * hor
+    var_len = (feat_size + self._actdim) * (hor + 1)
     num_iter = 100
     damping = 1e-3
 
@@ -197,7 +197,7 @@ class Dreamer(tools.Module):
     t = tfd.MultivariateNormalDiag(means, stds).sample()
     # Set the first state to be the observed initial state
     t = tf.concat([tf.squeeze(init_feat), t[feat_size:]], 0)
-    plan = tf.reshape(t, [1, hor, -1])
+    plan = tf.reshape(t, [1, hor+1, -1])
 
     def pair_residual_func_body(x_a, x_b, bs, goal, rew_res_weight=0.001):
       states = {'stoch': tf.reshape(x_a[:, :self._c.stoch_size], [1, bs, -1]),
@@ -214,7 +214,7 @@ class Dreamer(tools.Module):
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor-1, goal_feat, 0.001)
+      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor, goal_feat, 0.001)
 
     # Run second-order solver
     dyn_losses, rewards = [], []
@@ -225,7 +225,7 @@ class Dreamer(tools.Module):
       end = time.time()
       print(f"Single Gauss-Newton step time: {end - start}")
       # Compute and record dynamics loss and reward
-      plan_res = tf.reshape(plan, [hor, -1])
+      plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
       reward = tf.reduce_sum(self._reward(feat_preds).mode())
       stoch = tf.expand_dims(feat_preds[:-1, :self._c.stoch_size], 0)
