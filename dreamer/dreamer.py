@@ -127,14 +127,7 @@ class Dreamer(tools.Module):
 
   @tf.function
   def policy(self, obs, state, training):
-    if state is None:
-      latent = self._dynamics.initial(len(obs['image']))
-      action = tf.zeros((len(obs['image']), self._actdim), self._float)
-    else:
-      latent, action = state
-    embed = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embed)
-    feat = self._dynamics.get_feat(latent)
+    feat, latent = self.get_init_feat(obs, state)
     if training:
       action = self._actor(feat).sample()
     else:
@@ -142,6 +135,18 @@ class Dreamer(tools.Module):
     action = self._exploration(action, training)
     state = (latent, action)
     return action, state
+  
+  def get_init_feat(self, obs, state=None):
+    if state is None:
+      latent = self._dynamics.initial(len(obs['image']))
+      # TODO this is wrong for pointmass since 0 is not a noop
+      action = tf.zeros((len(obs['image']), self._actdim), self._float)
+    else:
+      latent, action = state
+    embed = self._encode(preprocess(obs, self._c))
+    latent, _ = self._dynamics.obs_step(latent, action, embed)
+    feat = self._dynamics.get_feat(latent)
+    return feat, latent
 
   def load(self, filename):
     super().load(filename)

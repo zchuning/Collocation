@@ -100,38 +100,38 @@ class DreamerColloc(Dreamer):
     self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
-  def collocation_so(self, obs, goal_obs, save_images, step):
+  def pair_residual_func_body(self, x_a, x_b, bs, goal, rew_res_weight=0.001):
+    actions = x_a[:, -self._actdim:][None]
+    feats = x_a[:, :-self._actdim][None]
+    states = self._dynamics.from_feat(feats)
+    prior = self._dynamics.img_step(states, actions)
+    x_b_pred = tf.concat([prior['mean'], prior['deter']], -1)[0]
+    dyn_res = x_b[:, :-self._actdim] - x_b_pred
+    act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
+    # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
+    rew = self._reward(x_b[:, :-self._actdim]).mode()
+    # TODO clip with subgradient
+    rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew - 100000, -np.inf, 0))[:, None]
+    objective = tf.concat([dyn_res, act_res, rew_res], 1)
+    return objective
+
+  def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
     damping = 1e-3
 
-    init_feat = self.get_init_feat(obs)
-    # goal_feat = self.get_init_feat(goal_obs)
+    if init_feat is None:
+      init_feat, _ = self.get_init_feat(obs)
     plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
 
-    def pair_residual_func_body(x_a, x_b, bs, goal, rew_res_weight=0.001):
-      actions = x_a[:, -self._actdim:][None]
-      feats = x_a[:, :-self._actdim][None]
-      states = self._dynamics.from_feat(feats)
-      prior = self._dynamics.img_step(states, actions)
-      x_b_pred = tf.concat([prior['mean'], prior['deter']], -1)[0]
-      dyn_res = x_b[:, :-self._actdim] - x_b_pred
-      act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
-      # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
-      rew = self._reward(x_b[:, :-self._actdim]).mode()
-      # TODO clip with subgradient
-      rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew - 100000, -np.inf, 0))[:, None]
-      objective = tf.concat([dyn_res, act_res, rew_res], 1)
-      return objective
-
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor, None, 0.001)
+      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, None, 0.001)
 
     # Run second-order solver
     dyn_losses, rewards, act_losses = [], [], []
@@ -155,16 +155,19 @@ class DreamerColloc(Dreamer):
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
-    img_preds = self._decode(feat_preds).mode()
-    print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
-    print(f"Final average action violation: {act_losses[-1] / hor}")
-    print(f"Final average reward: {rewards[-1] / hor}")
-    print(f"Final average initial state violation: {init_loss}")
+    if verbose:
+      print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
+      print(f"Final average action violation: {act_losses[-1] / hor}")
+      print(f"Final average reward: {rewards[-1] / hor}")
+      print(f"Final average initial state violation: {init_loss}")
     if save_images:
+      img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'rewards/{step}': rewards,
                                        f'dynamics/{step}': dyn_losses,
                                        f'action_violation/{step}': act_losses})
       self.visualize_colloc(img_preds, act_preds, init_feat)
+    else:
+      img_preds = None
     return act_preds, img_preds, feat_preds
   
   def collocation_goal(self, init, goal, optim):
@@ -246,7 +249,7 @@ class DreamerColloc(Dreamer):
     var_len_step = self._actdim + feat_size
 
     # Initialize decision variables
-    init_feat = self.get_init_feat(obs)
+    init_feat, _ = self.get_init_feat(obs)
     t = tf.Variable(tf.random.normal((horizon, var_len_step), dtype=self._float))
     lambdas = tf.ones(horizon)
     nus = tf.ones([horizon, self._actdim])
@@ -298,15 +301,6 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(img_pred, act_pred, init_feat)
     return act_pred, img_pred, feat_pred
 
-  def get_init_feat(self, obs):
-    latent = self._dynamics.initial(len(obs['image']))
-    # TODO this is wrong for PM since 0,0 is not a noop. Check whether the model is trained correctly with this.
-    action = tf.zeros((len(obs['image']), self._actdim), self._float)
-    embedding = self._encode(preprocess(obs, self._c))
-    latent, _ = self._dynamics.obs_step(latent, action, embedding)
-    init_feat = self._dynamics.get_feat(latent)
-    return init_feat
-
   def collocation_gd_inverse_model(self, obs, save_images, step):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
@@ -314,7 +308,7 @@ class DreamerColloc(Dreamer):
     var_len_step = feat_size
 
     # Initialize decision variables
-    init_feat = self.get_init_feat(obs)
+    init_feat, _ = self.get_init_feat(obs)
     t = tf.Variable(tf.random.normal((horizon, var_len_step), dtype=self._float))
     lambdas = tf.ones(horizon)
     nus = tf.ones([horizon, self._actdim])
@@ -375,7 +369,7 @@ class DreamerColloc(Dreamer):
     batch = self._c.cem_batch_size
 
     # Get initial states
-    init_feat = self.get_init_feat(obs)
+    init_feat, _ = self.get_init_feat(obs)
 
     lambdas = tf.ones(horizon)
     def eval_fitness(t):
@@ -445,7 +439,7 @@ class DreamerColloc(Dreamer):
     batch = self._c.cem_batch_size
 
     # Get initial states
-    init_feat = self.get_init_feat(obs)
+    init_feat, _ = self.get_init_feat(obs)
 
     def eval_fitness(t):
       init_feats = tf.tile(init_feat, [batch, 1])
@@ -541,6 +535,7 @@ class DreamerColloc(Dreamer):
             data, feat, prior_dist, post_dist, likes, div,
             model_loss, value_loss, actor_loss, model_norm, value_norm,
             actor_norm)
+      # TODO figure out why this breaks or make a hotfix...
       # if tf.equal(log_images, True):
       #   self._image_summaries(data, embed, image_pred)
 
