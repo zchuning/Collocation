@@ -111,7 +111,10 @@ class DreamerColloc(Dreamer):
       x_b_pred = tf.concat([prior['mean'], prior['deter']], -1)[0]
       dyn_res = x_b[:, :-self._actdim] - x_b_pred
       act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
-      rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
+      # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
+      rew = self._reward(x_b[:, :-self._actdim]).mode()
+      # TODO clip with subgradient
+      rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew - 100000, -np.inf, 0))[:, None]
       objective = tf.concat([dyn_res, act_res, rew_res], 1)
       return objective
 
