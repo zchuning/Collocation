@@ -3,6 +3,7 @@ import tensorflow as tf
 from tensorflow.keras import layers as tfkl
 from tensorflow_probability import distributions as tfd
 from tensorflow.keras.mixed_precision import experimental as prec
+from functools import partial
 
 import tools
 
@@ -39,19 +40,26 @@ class RSSM(tools.Module):
     return post, prior
 
   @tf.function
-  def imagine(self, action, state=None):
+  def imagine(self, action, state=None, deterministic=False):
     if state is None:
       state = self.initial(tf.shape(action)[0])
     assert isinstance(state, dict), state
     action = tf.transpose(action, [1, 0, 2]) # (100, 1, 4)
-    prior = tools.static_scan(self.img_step, action, state)
+    prior = tools.static_scan(partial(self.img_step, deterministic=deterministic), action, state)
     prior = {k: tf.transpose(v, [1, 0, 2]) for k, v in prior.items()}
     return prior
 
+  def imagine_feat(self, action, feat=None, deterministic=False):
+    state = self.from_feat(feat)
+    state_pred = self.imagine(action, state, deterministic)
+    feat_pred = self.get_feat(state_pred)
+    return feat_pred
+    
   def get_feat(self, state):
     return tf.concat([state['stoch'], state['deter']], -1)
   
   def from_feat(self, feat):
+    if feat is None: return None
     state = {'stoch': feat[..., :self._stoch_size], 'deter': feat[..., self._stoch_size:]}
     return state
 
@@ -72,7 +80,7 @@ class RSSM(tools.Module):
     return post, prior
 
   @tf.function
-  def img_step(self, prev_state, prev_action):
+  def img_step(self, prev_state, prev_action, deterministic=False):
     # q(s_{t} | s_{t-1}, a_{t-1})
     x = tf.concat([prev_state['stoch'], prev_action], -1)
     x = self.get('img1', tfkl.Dense, self._hidden_size, self._activation)(x)
@@ -82,7 +90,10 @@ class RSSM(tools.Module):
     x = self.get('img3', tfkl.Dense, 2 * self._stoch_size, None)(x)
     mean, std = tf.split(x, 2, -1)
     std = tf.nn.softplus(std) + 0.1
-    stoch = self.get_dist({'mean': mean, 'std': std}).sample()
+    if deterministic:
+      stoch = self.get_dist({'mean': mean, 'std': std}).mean()
+    else:
+      stoch = self.get_dist({'mean': mean, 'std': std}).sample()
     prior = {'mean': mean, 'std': std, 'stoch': stoch, 'deter': deter}
     return prior
 

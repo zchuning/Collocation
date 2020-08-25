@@ -74,21 +74,31 @@ class DreamerColloc(Dreamer):
 
   def forward_dynamics(self, states, actions):
     return self._dynamics.img_step(states, actions)
-
+  
+  def forward_dynamics_feat(self, feats, actions):
+    # TODO would be nice to handle this with a class
+    states = self._dynamics.from_feat(feats)
+    state_pred = self._dynamics.img_step(states, actions)
+    feat_pred = self._dynamics.get_feat(state_pred)
+    return feat_pred
+    
   def decode_feats(self, feats):
     return self._decode(feats).mode()
 
   def visualize_colloc(self, img_pred, act_pred, init_feat):
     # Use actions to predict trajectory
-    curr_state = self._dynamics.from_feat(init_feat)
-    state_pred = self._dynamics.imagine(act_pred[None], curr_state)
-    feat_pred = self._dynamics.get_feat(state_pred)
-    model_imgs = self._decode(feat_pred).mode().numpy()
+    feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat)
+    model_imgs = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode().numpy()
+    self.logger.log_video("model", model_imgs)
+
+    # Deterministic prediction
+    feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat, deterministic=True)
+    model_imgs = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode().numpy()
+    self.logger.log_video("model_mean", model_imgs)
     
     # Write images
     self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
-    self.logger.log_video("model", model_imgs)
 
   def collocation_so(self, obs, goal_obs, save_images, step):
     hor = self._c.planning_horizon
@@ -97,7 +107,7 @@ class DreamerColloc(Dreamer):
     damping = 1e-3
 
     init_feat = self.get_init_feat(obs)
-    goal_feat = self.get_init_feat(goal_obs)
+    # goal_feat = self.get_init_feat(goal_obs)
     plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
@@ -121,7 +131,7 @@ class DreamerColloc(Dreamer):
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor, goal_feat, 0.001)
+      lambda x_a, x_b : pair_residual_func_body(x_a, x_b, hor, None, 0.001)
 
     # Run second-order solver
     dyn_losses, rewards, act_losses = [], [], []
@@ -132,6 +142,7 @@ class DreamerColloc(Dreamer):
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      init_loss = tf.linalg.norm(feat_preds[0:1] - init_feat)
       reward = tf.reduce_sum(self._reward(feat_preds).mode())
       states = self._dynamics.from_feat(feat_preds[None, :-1])
       priors = self._dynamics.img_step(states, act_preds[None, :-1])
@@ -148,6 +159,7 @@ class DreamerColloc(Dreamer):
     print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
     print(f"Final average action violation: {act_losses[-1] / hor}")
     print(f"Final average reward: {rewards[-1] / hor}")
+    print(f"Final average initial state violation: {init_loss}")
     if save_images:
       self.logger.log_graph('losses', {f'rewards/{step}': rewards,
                                        f'dynamics/{step}': dyn_losses,
@@ -561,10 +573,12 @@ def colloc_simulate(agent, config, env, save_images=True):
   obs = env.reset()
   obs['image'] = [obs['image']]
   # Obtain goal observation for goal-based collocation
-  is_goal_based = (len(config.planning_task.split('_')) == 3)
+  is_goal_based = 'goal' in pt
   if is_goal_based:
     goal_obs = env.render_goal()
     goal_obs['image'] = [goal_obs['image']]
+  else:
+    goal_obs = None
   
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
