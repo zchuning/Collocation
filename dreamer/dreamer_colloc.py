@@ -132,6 +132,8 @@ class DreamerColloc(Dreamer):
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
       lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, None, 0.001)
+    # TODO make the change below (will need to clean up indices and such)
+    # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
     # Run second-order solver
     dyn_losses, rewards, act_losses = [], [], []

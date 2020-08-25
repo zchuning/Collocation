@@ -142,7 +142,7 @@ class Dreamer(tools.Module):
       # TODO this is wrong for pointmass since 0 is not a noop
       action = tf.zeros((len(obs['image']), self._actdim), self._float)
     else:
-      latent, action = state
+      latent, action = state[:2]
     embed = self._encode(preprocess(obs, self._c))
     latent, _ = self._dynamics.obs_step(latent, action, embed)
     feat = self._dynamics.get_feat(latent)

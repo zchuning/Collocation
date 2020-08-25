@@ -106,22 +106,26 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     
   @tf.function
   def plan(self, feat):
-    # TODO cache plans
     # TODO speed this up
-    # TODO why does it recompile the graph?? Seem fixed with tf.function around this though.
-    # - likely because of the labmda functions that are re-defined every time
-    # TODO check whether anonymous functions work correctly in graph mode!!
+    # Note: it is possible to get rid of tf.function by removing lambda-functions in collocation_so. This is possible
+    # by removing the init_residual_function and enforcing it as a hard constraint.
+    # TODO check whether anonymous functions work correctly in graph mode! They seem to, but it's not clear
     act_pred, img_pred, feat_pred = self.collocation_so(None, None, False, None, feat, verbose=False)
-    return act_pred[0:1]
+    return act_pred
   
   def policy(self, obs, state, training):
     feat, latent = self.get_init_feat(obs, state)
     
-    with timing("Plan constructed in: "):
-      action = self.plan(feat)
+    if state is not None and state[2].shape[0] > 0:
+      # Cached actions
+      actions = state[2]
+    else:
+      with timing("Plan constructed in: "):
+        actions = self.plan(feat)
+    action = actions[0:1]
     action = self._exploration(action, training)
     
-    state = (latent, action)
+    state = (latent, action, actions[1:])
     return action, state
 
 
