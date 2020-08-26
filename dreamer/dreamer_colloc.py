@@ -101,11 +101,11 @@ class DreamerColloc(Dreamer):
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
   def pair_residual_func_body(self, x_a, x_b, bs, goal, rew_res_weight=0.001):
-    actions = x_a[:, -self._actdim:][None]
-    feats = x_a[:, :-self._actdim][None]
-    states = self._dynamics.from_feat(feats)
-    prior = self._dynamics.img_step(states, actions)
-    x_b_pred = tf.concat([prior['mean'], prior['deter']], -1)[0]
+    actions_a = x_a[:, -self._actdim:][None]
+    feats_a = x_a[:, :-self._actdim][None]
+    states_a = self._dynamics.from_feat(feats_a)
+    prior_a = self._dynamics.img_step(states_a, actions_a)
+    x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
     act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
     # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
@@ -473,14 +473,16 @@ class DreamerColloc(Dreamer):
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
     feat_pred = feats[elite_inds[0]]
-    img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
     print("Final average reward: {0}".format(rewards[-1] / horizon))
     if self._c.visualize:
+      img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
       plt.title("Reward Curve")
       plt.plot(range(len(rewards)), rewards)
       plt.savefig('./lr.jpg')
       plt.show()
+    else:
+      img_pred = None
     return act_pred, img_pred
 
   def _train(self, data, log_images):

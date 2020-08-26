@@ -154,9 +154,6 @@ class Dreamer(tools.Module):
 
   @tf.function()
   def train(self, data, log_images=False):
-    self._train(data, log_images)
-
-  def _train(self, data, log_images):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
       post, prior = self._dynamics.observe(embed, data['action'])
