@@ -118,7 +118,12 @@ class MetaWorld(DreamerEnv):
     self._offscreen.cam.lookat[0] = 1.1
     self._offscreen.cam.lookat[1] = 1.1
     self._offscreen.cam.lookat[2] = -0.1
-
+  
+  # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
+  def reset(self):
+    self._env.hand_init_pos = np.array([0, .6, .1])
+    return super().reset()
+  
   def step(self, action):
     total_reward = 0.0
     for step in range(self._action_repeat):
