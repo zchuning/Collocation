@@ -3,7 +3,6 @@
 
 Optimizes path residual defined by pairwise function r^t(x^t, x^{t+1}).
 """
-import time
 
 import numpy as np
 import tensorflow.compat.v2 as tf
@@ -149,7 +148,6 @@ def tridiagonal_to_dense(D, B, B_upper = None, fill_lower = True, fill_upper = T
 def gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping = 0.0, noise_amount = None):
   T = len(r)
   # build gradient
-  # t0 = time.time()
   g = gradient_vector(r, J_curr, J_prev)
   for t in range(T):
     g[t] = tf.expand_dims(g[t], -1) # add dimension for solver compatibility
@@ -158,7 +156,6 @@ def gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping = 0.0, noise
   # solve system
   L, C = factorize(D, B)
   X = solve_factorized(L, C, g)
-  # t1 = time.time()
   # print(f"Gauss-Newton solve total: {t1-t0}")
   for t in range(T):
     X[t] = X[t][..., 0] # remove unused dimension
@@ -243,17 +240,13 @@ def make_blocks(pair_residual_func, init_residual_func, x,
   batch_pair_func = lambda x : pair_residual_func(x[:,0,:], x[:,1,:])
 
   # compute batch pair residuals and Jacobians
-  # t0 = time.time()
   R_pair, J_pair = jacobian(batch_pair_func, X_pair)
-  # t1 = time.time()
   dim_r = R_pair.shape[-1]
   R_pair = tf.reshape(R_pair, [-1, T-1, dim_r])
   J_pair = tf.reshape(J_pair, [-1, T-1, dim_r, 2, dim_x])
 
   # initial condition residuals and Jacobians
   R_init, J_init = jacobian(init_residual_func, x[:,0,:])
-  # t2 = time.time()
-  # print(f"Jacobian 1: {t1-t0}, jacobian 2: {t2-t1}")
 
   # incorporate loss derivaties into residuals and Jacobians
   if pair_loss_func:
@@ -323,11 +316,8 @@ def solve_step(pair_residual_function, init_residual_function, x,
 @tf.function
 def solve_step_inference(pair_residual_function, init_residual_function, x,
                pair_loss_func = None, damping=0.0, noise_amount=None):
-  # t0 = time.time()
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
-  # t1 = time.time()
-  # print(f"Make_blocks time: {t1 - t0}")
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
   dx = tf.stack(dx, axis=1)
   return x - dx

@@ -39,7 +39,7 @@ from utils import logging
 def define_config():
   config = dreamer.define_config()
   config.precision = 32
-  
+
   # Planning
   config.planning_task = 'colloc_gd'
   config.planning_horizon = 10
@@ -54,6 +54,9 @@ def define_config():
   config.nu_lr = 100
   config.dyn_loss_scale = 5000
   config.act_loss_scale = 100
+  config.rew_res_wt = 1
+  config.dyn_res_wt = 1
+  config.act_res_wt = 10
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
@@ -75,14 +78,14 @@ class DreamerColloc(Dreamer):
 
   def forward_dynamics(self, states, actions):
     return self._dynamics.img_step(states, actions)
-  
+
   def forward_dynamics_feat(self, feats, actions):
     # TODO would be nice to handle this with a class
     states = self._dynamics.from_feat(feats)
     state_pred = self._dynamics.img_step(states, actions)
     feat_pred = self._dynamics.get_feat(state_pred)
     return feat_pred
-    
+
   def decode_feats(self, feats):
     return self._decode(feats).mode()
 
@@ -96,23 +99,23 @@ class DreamerColloc(Dreamer):
     feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat, deterministic=True)
     model_imgs = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode().numpy()
     self.logger.log_video("model_mean", model_imgs)
-    
+
     # Write images
     self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
-  def pair_residual_func_body(self, x_a, x_b, bs, goal, rew_res_weight=0.001):
+  def pair_residual_func_body(self, x_a, x_b, bs, goal):
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
     prior_a = self._dynamics.img_step(states_a, actions_a)
     x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
-    dyn_res = x_b[:, :-self._actdim] - x_b_pred
-    act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
+    dyn_res = self._c.dyn_res_wt * (x_b[:, :-self._actdim] - x_b_pred)
+    act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
     # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
     rew = self._reward(x_b[:, :-self._actdim]).mode()
-    # TODO clip with subgradient
-    rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew - 100000, -np.inf, 0))[:, None]
+    rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
+    # rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None]
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
 
@@ -132,9 +135,8 @@ class DreamerColloc(Dreamer):
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, None, 0.001)
-    # TODO make the change below. This requires a special treatment of the first action: use inverse model or
-    # modify solver
+      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, None)
+    # TODO make the change below (will need to clean up indices and such)
     # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
     # Run second-order solver
@@ -173,7 +175,7 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     return act_preds, img_preds, feat_preds
-  
+
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -184,7 +186,7 @@ class DreamerColloc(Dreamer):
       init_feat, _ = self.get_init_feat(obs)
     goal_feat, _ = self.get_init_feat(goal_obs)
     plan = tf.random.normal((1, hor + 1, var_len_step,), dtype=self._float)
-    
+
     def fix_first_last(plan):
       # Set the first state to be the observed initial state
       plan = tf.reshape(plan, [1, (hor + 1) * var_len_step])
@@ -246,14 +248,14 @@ class DreamerColloc(Dreamer):
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
     damping = 1e-3
-  
+
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
     goal_feat, _ = self.get_init_feat(goal_obs)
     plan = tf.random.normal((hor * var_len_step,), dtype=self._float)
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor, var_len_step])
-  
+
     def pair_residual_func(x_a, x_b):
       actions_a = x_a[:, feat_size:]
       feats_a = x_a[:, :feat_size]
@@ -268,7 +270,7 @@ class DreamerColloc(Dreamer):
     # final_residual_func = lambda x: (x[:, :-self._actdim] - goal_feat) * 1000
     final_residual_func = lambda x_a: pair_residual_func(x_a, goal_feat)
     # final_residual_func = lambda x: tf.zeros((1,0))
-  
+
     # Run second-order solver
     dyn_losses, rewards, act_losses = [], [], []
     for i in range(self._c.gd_steps):
@@ -286,7 +288,7 @@ class DreamerColloc(Dreamer):
       dyn_losses.append(dyn_loss)
       rewards.append(reward)
       act_losses.append(act_loss)
-  
+
     import pdb; pdb.set_trace()
     act_plan = act_plan[:min(hor, self._c.mpc_steps)]
     feat_plan = feat_plan[1:min(hor, self._c.mpc_steps) + 1]
@@ -303,7 +305,7 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     return act_plan, img_preds, feat_plan
-  
+
   def collocation_goal(self, init, goal, optim):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
@@ -711,7 +713,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     goal_obs['image'] = [goal_obs['image']]
   else:
     goal_obs = None
-  
+
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward = 0
@@ -764,10 +766,10 @@ def colloc_simulate(agent, config, env, save_images=True):
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
   import pdb; pdb.set_trace()
   agent._reward(feat_pred).mean()
-  
+
   return total_reward
-  
-  
+
+
 def main(config):
   if config.gpu_growth:
     for gpu in tf.config.experimental.list_physical_devices('GPU'):

@@ -38,7 +38,7 @@ from utils import logging
 def define_config():
   config = dreamer_colloc.define_config()
   config.precision = 32
-  
+
   return config
 
 
@@ -104,24 +104,24 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
             actor_norm)
       if tf.equal(log_images, True):
         self._image_summaries(data, embed, image_pred)
-  
+
   def _policy_summaries(self, feat_pred, act_pred, init_feat):
     # Collocation
     img_pred = self._decode(feat_pred).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'plan', img_pred + 0.5)
     # TODO add error as in _image_summaries
-    
+
     # Forward prediction
     feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat)
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model', img_pred + 0.5)
-  
+
     # Deterministic prediction
     feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat, deterministic=True)
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model_mean', img_pred + 0.5)
-  
-  
+
+
   @tf.function
   def plan(self, feat, log_images):
     # TODO speed this up
@@ -131,12 +131,12 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     act_pred, img_pred, feat_pred = self.collocation_so(None, None, False, None, feat, verbose=False)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-    
+
     return act_pred
-  
+
   def policy(self, obs, state, training):
     feat, latent = self.get_init_feat(obs, state)
-    
+
     if state is not None and state[2].shape[0] > 0:
       # Cached actions
       actions = state[2]
@@ -145,7 +145,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
         actions = self.plan(feat, not training)
     action = actions[0:1]
     action = self._exploration(action, training)
-    
+
     state = (latent, action, actions[1:])
     return action, state
 

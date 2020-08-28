@@ -17,7 +17,7 @@ else:
 
 class DreamerEnv():
   LOCK = threading.Lock()
-  
+
   def __init__(self, action_repeat):
     self._action_repeat = action_repeat
     self._width = 64
@@ -53,13 +53,13 @@ class DreamerEnv():
 
   def render(self, mode):
     return self._env.render(mode)
-  
+
   def _get_obs(self, state):
     self._offscreen.render(self._width, self._width, -1)
     image = np.flip(self._offscreen.read_pixels(self._width, self._width)[0], 1)
     return {'image': image, 'state': state}
-  
-  
+
+
 class DreamerMujocoEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1):
     super().__init__(action_repeat)
@@ -135,17 +135,22 @@ class MetaWorld(DreamerEnv):
     return obs, total_reward, done, info
 
   def render_goal(self):
-    self._env.hand_init_pos = np.array([-0.1, 0.8, 0.2])
+    obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
+    self._env.init_config['obj_init_pos'] = self._env.goal
+    self._env.obj_init_pos = self._env.goal
+    self._env.hand_init_pos = self._env.goal
     self.reset()
     action = np.zeros(self._env.action_space.low.shape)
-    state, _, _, _ = self._env.step(action)
+    state, reward, done, info = self._env.step(action)
     goal_obs = self._get_obs(state)
     goal_obs['reward'] = 0.0
     self._env.hand_init_pos = self._env.init_config['hand_init_pos']
+    self._env.init_config['obj_init_pos'] = obj_init_pos_temp
+    self._env.obj_init_pos = self._env.init_config['obj_init_pos']
     self.reset()
     return goal_obs
 
-  
+
 class DeepMindControl:
 
   def __init__(self, name, size=(64, 64), camera=None):
