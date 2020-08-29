@@ -45,8 +45,9 @@ def define_config():
 class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
   def __init__(self, config, datadir, actspace, writer):
     dreamer.Dreamer.__init__(self, config, datadir, actspace, writer)
-    
-  def _train(self, data, log_images):
+
+  @tf.function()
+  def train(self, data, log_images=False):
     # TODO quite sure the float32 thing needs to be a config setting
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
