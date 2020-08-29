@@ -61,6 +61,7 @@ def define_config():
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
   config.eval_tasks = 1
+  config.goal_based = False
   return config
 
 
@@ -110,12 +111,15 @@ class DreamerColloc(Dreamer):
     states_a = self._dynamics.from_feat(feats_a)
     prior_a = self._dynamics.img_step(states_a, actions_a)
     x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
+    # epsilon = 1e-1
+    # dyn_res = self._c.dyn_res_wt * (tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf))
     dyn_res = self._c.dyn_res_wt * (x_b[:, :-self._actdim] - x_b_pred)
     act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
-    # rew_res = rew_res_weight * (x_b[:, :-self._actdim] - goal)
+    # TODO: use a branch to decide whether to use goal-based or reward-based residual
+    # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
-    # rew_res = rew_res_weight * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None]
+    # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None]
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
 
@@ -127,6 +131,10 @@ class DreamerColloc(Dreamer):
 
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
+    if not goal_obs is None:
+      goal_feat, _ = self.get_init_feat(goal_obs)
+    else:
+      goal_feat = None
     plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
@@ -135,7 +143,7 @@ class DreamerColloc(Dreamer):
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = \
-      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, None)
+      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, goal_feat)
     # TODO make the change below (will need to clean up indices and such)
     # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
@@ -707,9 +715,10 @@ def colloc_simulate(agent, config, env, save_images=True):
   obs = env.reset()
   obs['image'] = [obs['image']]
   # Obtain goal observation for goal-based collocation
-  is_goal_based = 'goal' in pt
+  is_goal_based = 'goal' in pt or config.goal_based
   if is_goal_based:
     goal_obs = env.render_goal()
+    imageio.imwrite('goal_img.jpg', goal_obs['image'])
     goal_obs['image'] = [goal_obs['image']]
   else:
     goal_obs = None
@@ -751,9 +760,6 @@ def colloc_simulate(agent, config, env, save_images=True):
       total_reward += reward
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
-    # Break if running goal-based collocation
-    if is_goal_based:
-      break
   end = time.time()
   print(f"Planning time: {end - start}")
   if save_images:
