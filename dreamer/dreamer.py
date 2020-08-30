@@ -135,7 +135,7 @@ class Dreamer(tools.Module):
     action = self._exploration(action, training)
     state = (latent, action)
     return action, state
-  
+
   def get_init_feat(self, obs, state=None):
     if state is None:
       latent = self._dynamics.initial(len(obs['image']))
@@ -404,6 +404,8 @@ def make_bare_env(config):
     env = wrappers.OneHotAction(env)
   elif suite == "mw":
     env = wrappers.MetaWorld(task, config.action_repeat)
+  elif suite == "mwsparse":
+    env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "colloc":
     env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
   elif suite == "d4rl":

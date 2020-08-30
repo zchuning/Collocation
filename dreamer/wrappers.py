@@ -151,6 +151,23 @@ class MetaWorld(DreamerEnv):
     return goal_obs
 
 
+class MetaWorldSparseReward(MetaWorld):
+
+  def __init__(self, name, action_repeat):
+    super().__init__(name, action_repeat)
+
+  def step(self, action):
+    total_reward = 0.0
+    for step in range(self._action_repeat):
+      state, _, done, info = self._env.step(action)
+      reward = info['success']
+      total_reward += reward
+      if done:
+        break
+    obs = self._get_obs(state)
+    return obs, total_reward, done, info
+
+
 class DeepMindControl:
 
   def __init__(self, name, size=(64, 64), camera=None):
