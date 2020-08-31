@@ -43,7 +43,30 @@ def define_config():
 
 class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
   def __init__(self, config, datadir, actspace, writer):
+    self._optim_metrics = collections.defaultdict(tf.metrics.Mean)
     dreamer.Dreamer.__init__(self, config, datadir, actspace, writer)
+
+  def __call__(self, obs, reset, state=None, training=True):
+    step = self._step.numpy().item()
+    tf.summary.experimental.set_step(step)
+    if state is not None and reset.any():
+      mask = tf.cast(1 - reset, self._float)[:, None]
+      state = tf.nest.map_structure(lambda x: x * mask, state)
+    log = self._should_log(step)
+    if self._should_train(step):
+      n = self._c.pretrain if self._should_pretrain() else self._c.train_steps
+      print(f'Training for {n} steps.')
+      for train_step in range(n):
+        log_images = self._c.log_images and log and train_step == 0
+        self.train(next(self._dataset), log_images)
+      if log:
+        self._write_summaries()
+    action, state = self.policy(obs, state, training)
+    if log:
+      self._write_optim_summaries()
+    if training:
+      self._step.assign_add(len(reset) * self._c.action_repeat)
+    return action, state
 
   @tf.function()
   def train(self, data, log_images=False):
@@ -92,6 +115,12 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     self._metrics['div'].update_state(div)
     self._metrics['model_loss'].update_state(model_loss)
 
+  def _write_optim_summaries(self):
+    metrics = [(k, float(v.result())) for k, v in self._optim_metrics.items()]
+    [m.reset_states() for m in self._optim_metrics.values()]
+    [tf.summary.scalar('optim/' + k, m) for k, m in metrics]
+    self._writer.flush()
+
   def _policy_summaries(self, feat_pred, act_pred, init_feat):
     # Collocation
     img_pred = self._decode(feat_pred).mode()
@@ -117,7 +146,10 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-    return act_pred, info
+    self._optim_metrics['dynamics'].update_state(info[0])
+    self._optim_metrics['action_violation'].update_state(info[1])
+    self._optim_metrics['rewards'].update_state(info[2])
+    return act_pred
 
   def policy(self, obs, state, training):
     feat, latent = self.get_init_feat(obs, state)
@@ -127,12 +159,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       actions = state[2]
     else:
       with timing("Plan constructed in: "):
-        actions, info = self.plan(feat, not training)
-      # Log scalars
-      tf.summary.scalar('planner/dynamics', info[0])
-      tf.summary.scalar('planner/action_violation', info[1])
-      tf.summary.scalar('planner/rewards', info[2])
-      self._writer.flush()
+        actions = self.plan(feat, not training)
     action = actions[0:1]
     action = self._exploration(action, training)
 

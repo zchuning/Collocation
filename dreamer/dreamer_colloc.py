@@ -149,7 +149,7 @@ class DreamerColloc(Dreamer):
     # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
     # Run second-order solver
-    dyn_losses, rewards, act_losses = [], [], []
+    dyn_losses, act_losses, rewards = [], [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       with timing("Single Gauss-Newton step time: "):
@@ -165,8 +165,8 @@ class DreamerColloc(Dreamer):
       dyn_loss = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]))
       act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds) - 1, 0, np.inf))
       dyn_losses.append(dyn_loss)
-      rewards.append(reward)
       act_losses.append(act_loss)
+      rewards.append(reward)
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
