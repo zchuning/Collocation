@@ -38,7 +38,6 @@ from utils import logging
 def define_config():
   config = dreamer_colloc.define_config()
   config.precision = 32
-
   return config
 
 
@@ -51,16 +50,16 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     # TODO quite sure the float32 thing needs to be a config setting
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
-      post, prior = self._dynamics.observe(embed, tf.cast(data['action'], tf.float32))
+      post, prior = self._dynamics.observe(embed, data['action'])
       feat = self._dynamics.get_feat(post)
       image_pred = self._decode(feat)
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(tf.cast(data['reward'], tf.float32)))
+      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
-        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(tf.cast(data['action'], tf.float32)[:, :-1]))
+        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -72,38 +71,26 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       div = tf.maximum(div, self._c.free_nats)
       model_loss = self._c.kl_scale * div - sum(likes.values())
 
-    with tf.GradientTape() as actor_tape:
-      imag_feat = self._imagine_ahead(post)
-      reward = self._reward(imag_feat).mode()
-      if self._c.pcont:
-        pcont = self._pcont(imag_feat).mean()
-      else:
-        pcont = self._c.discount * tf.ones_like(reward)
-      value = self._value(imag_feat).mode()
-      returns = tools.lambda_return(
-          reward[:-1], value[:-1], pcont[:-1],
-          bootstrap=value[-1], lambda_=self._c.disclam, axis=0)
-      discount = tf.stop_gradient(tf.math.cumprod(tf.concat(
-          [tf.ones_like(pcont[:1]), pcont[:-2]], 0), 0))
-      actor_loss = -tf.reduce_mean(discount * returns)
-
-    with tf.GradientTape() as value_tape:
-      value_pred = self._value(imag_feat)[:-1]
-      target = tf.stop_gradient(returns)
-      value_loss = -tf.reduce_mean(discount * value_pred.log_prob(target))
-
     model_norm = self._model_opt(model_tape, model_loss)
-    actor_norm = self._actor_opt(actor_tape, actor_loss)
-    value_norm = self._value_opt(value_tape, value_loss)
 
     if tf.distribute.get_replica_context().replica_id_in_sync_group == 0:
       if self._c.log_scalars:
         self._scalar_summaries(
             data, feat, prior_dist, post_dist, likes, div,
-            model_loss, value_loss, actor_loss, model_norm, value_norm,
-            actor_norm)
+            model_loss, model_norm)
       if tf.equal(log_images, True):
         self._image_summaries(data, embed, image_pred)
+
+  def _scalar_summaries(
+      self, data, feat, prior_dist, post_dist, likes, div,
+      model_loss, model_norm):
+    self._metrics['model_grad_norm'].update_state(model_norm)
+    self._metrics['prior_ent'].update_state(prior_dist.entropy())
+    self._metrics['post_ent'].update_state(post_dist.entropy())
+    for name, logprob in likes.items():
+      self._metrics[name + '_loss'].update_state(-logprob)
+    self._metrics['div'].update_state(div)
+    self._metrics['model_loss'].update_state(model_loss)
 
   def _policy_summaries(self, feat_pred, act_pred, init_feat):
     # Collocation
@@ -121,7 +108,6 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model_mean', img_pred + 0.5)
 
-
   @tf.function
   def plan(self, feat, log_images):
     # TODO speed this up
@@ -131,7 +117,6 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     act_pred, img_pred, feat_pred = self.collocation_so(None, None, False, None, feat, verbose=False)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-
     return act_pred
 
   def policy(self, obs, state, training):

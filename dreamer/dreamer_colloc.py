@@ -56,7 +56,7 @@ def define_config():
   config.act_loss_scale = 100
   config.rew_res_wt = 1
   config.dyn_res_wt = 1
-  config.act_res_wt = 10
+  config.act_res_wt = 1
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
@@ -111,13 +111,14 @@ class DreamerColloc(Dreamer):
     states_a = self._dynamics.from_feat(feats_a)
     prior_a = self._dynamics.img_step(states_a, actions_a)
     x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
-    # epsilon = 1e-1
-    # dyn_res = self._c.dyn_res_wt * (tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf))
+    rew = self._reward(x_b[:, :-self._actdim]).mode()
+    # epsilon = 1e-3
+    # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
     dyn_res = self._c.dyn_res_wt * (x_b[:, :-self._actdim] - x_b_pred)
-    act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:])-1, 0, np.inf)
+    act_res = self._c.act_res_wt * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # TODO: use a branch to decide whether to use goal-based or reward-based residual
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
-    rew = self._reward(x_b[:, :-self._actdim]).mode()
     rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None]
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
@@ -131,7 +132,7 @@ class DreamerColloc(Dreamer):
 
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
-    if not goal_obs is None:
+    if goal_obs is not None:
       goal_feat, _ = self.get_init_feat(goal_obs)
     else:
       goal_feat = None
