@@ -105,7 +105,7 @@ class DreamerColloc(Dreamer):
     self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
-  def pair_residual_func_body(self, x_a, x_b, bs, goal):
+  def pair_residual_func_body(self, x_a, x_b, goal, lam, nu):
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
@@ -114,13 +114,12 @@ class DreamerColloc(Dreamer):
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
-    dyn_res = self._c.dyn_res_wt * (x_b[:, :-self._actdim] - x_b_pred)
-    act_res = self._c.act_res_wt * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    dyn_res = tf.sqrt(lam) * (x_b[:, :-self._actdim] - x_b_pred)
+    act_res = tf.sqrt(nu) * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
-    # TODO: use a branch to decide whether to use goal-based or reward-based residual
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
-    # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None]
+    # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
 
@@ -143,8 +142,9 @@ class DreamerColloc(Dreamer):
 
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
+    lam = nu = 1.0
     pair_residual_func = \
-      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, hor, goal_feat)
+      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
     # TODO make the change below (will need to clean up indices and such)
     # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
@@ -154,6 +154,21 @@ class DreamerColloc(Dreamer):
       # Run Gauss-Newton step
       with timing("Single Gauss-Newton step time: "):
         plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
+
+      # Update lagrange multipliers
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        dim = plan.shape[-1]
+        plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
+        plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
+        res = pair_residual_func(plan_prev, plan_curr)
+        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]))
+        act_res_sq = tf.reduce_sum(tf.square(res[:, -self._actdim-1:-1]))
+        lam += self._c.lambda_lr * dyn_res_sq
+        nu += self._c.nu_lr * act_res_sq
+        pair_residual_func = \
+          lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
+        print(f"Updated Lagrange multipliers: lambda {lam}, nu {nu}")
+
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
