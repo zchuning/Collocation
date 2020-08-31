@@ -183,7 +183,8 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(img_preds, act_preds, init_feat)
     else:
       img_preds = None
-    return act_preds, img_preds, feat_preds
+    info = (dyn_losses[-1] / hor, act_losses[-1] / hor, rewards[-1] / hor)
+    return act_preds, img_preds, feat_preds, info
 
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
@@ -739,7 +740,7 @@ def colloc_simulate(agent, config, env, save_images=True):
       else:
         act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
     elif pt == 'colloc_second_order':
-      act_pred, img_pred, feat_pred = agent.collocation_so(obs, goal_obs, save_images, i)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so(obs, goal_obs, save_images, i)
     elif pt == 'colloc_second_order_goal':
       act_pred, img_pred, feat_pred = agent.collocation_so_goal_1(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':

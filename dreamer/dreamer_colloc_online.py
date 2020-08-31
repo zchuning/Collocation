@@ -114,10 +114,10 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     # Note: it is possible to get rid of tf.function by removing lambda-functions in collocation_so. This is possible
     # by removing the init_residual_function and enforcing it as a hard constraint.
     # TODO check whether anonymous functions work correctly in graph mode! They seem to, but it's not clear
-    act_pred, img_pred, feat_pred = self.collocation_so(None, None, False, None, feat, verbose=False)
+    act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-    return act_pred
+    return act_pred, info
 
   def policy(self, obs, state, training):
     feat, latent = self.get_init_feat(obs, state)
@@ -127,7 +127,12 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       actions = state[2]
     else:
       with timing("Plan constructed in: "):
-        actions = self.plan(feat, not training)
+        actions, info = self.plan(feat, not training)
+      # Log scalars
+      tf.summary.scalar('planner/dynamics', info[0])
+      tf.summary.scalar('planner/action_violation', info[1])
+      tf.summary.scalar('planner/rewards', info[2])
+      self._writer.flush()
     action = actions[0:1]
     action = self._exploration(action, training)
 
