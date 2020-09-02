@@ -114,7 +114,7 @@ class DreamerColloc(Dreamer):
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
-    dyn_res = tf.sqrt(lam) * (x_b[:, :-self._actdim] - x_b_pred)
+    dyn_res = tf.sqrt(lam)[:, None] * (x_b[:, :-self._actdim] - x_b_pred)
     act_res = tf.sqrt(nu) * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
@@ -142,7 +142,8 @@ class DreamerColloc(Dreamer):
 
     init_residual_func = \
       lambda x : (x[:, :-self._actdim] - init_feat) * 1000
-    lam = nu = 1.0
+    lam = tf.ones(hor)
+    nu = tf.ones([hor, self._actdim])
     pair_residual_func = \
       lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
     # TODO make the change below (will need to clean up indices and such)
@@ -161,13 +162,13 @@ class DreamerColloc(Dreamer):
         plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
         plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
         res = pair_residual_func(plan_prev, plan_curr)
-        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]))
-        act_res_sq = tf.reduce_sum(tf.square(res[:, -self._actdim-1:-1]))
+        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
+        act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         lam += self._c.lambda_lr * dyn_res_sq
         nu += self._c.nu_lr * act_res_sq
         pair_residual_func = \
           lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
-        print(f"Updated Lagrange multipliers: lambda {lam}, nu {nu}")
+        print(f"Lagrange multipliers: lambda {lam}, nu {nu}")
 
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
