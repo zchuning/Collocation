@@ -649,16 +649,16 @@ class DreamerColloc(Dreamer):
   def train(self, data, log_images=False):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
-      post, prior = self._dynamics.observe(embed, tf.cast(data['action'], tf.float32))
+      post, prior = self._dynamics.observe(embed, data['action'])
       feat = self._dynamics.get_feat(post)
       image_pred = self._decode(feat)
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(tf.cast(data['reward'], tf.float32)))
+      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
-        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(tf.cast(data['action'], tf.float32)[:, :-1]))
+        likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']

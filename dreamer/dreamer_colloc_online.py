@@ -94,26 +94,38 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       div = tf.maximum(div, self._c.free_nats)
       model_loss = self._c.kl_scale * div - sum(likes.values())
 
+    with tf.GradientTape() as actor_tape:
+      imag_feat = self._imagine_ahead(post)
+      reward = self._reward(imag_feat).mode()
+      if self._c.pcont:
+        pcont = self._pcont(imag_feat).mean()
+      else:
+        pcont = self._c.discount * tf.ones_like(reward)
+      value = self._value(imag_feat).mode()
+      returns = tools.lambda_return(
+          reward[:-1], value[:-1], pcont[:-1],
+          bootstrap=value[-1], lambda_=self._c.disclam, axis=0)
+      discount = tf.stop_gradient(tf.math.cumprod(tf.concat(
+          [tf.ones_like(pcont[:1]), pcont[:-2]], 0), 0))
+      actor_loss = -tf.reduce_mean(discount * returns)
+
+    with tf.GradientTape() as value_tape:
+      value_pred = self._value(imag_feat)[:-1]
+      target = tf.stop_gradient(returns)
+      value_loss = -tf.reduce_mean(discount * value_pred.log_prob(target))
+
     model_norm = self._model_opt(model_tape, model_loss)
+    actor_norm = self._actor_opt(actor_tape, actor_loss)
+    value_norm = self._value_opt(value_tape, value_loss)
 
     if tf.distribute.get_replica_context().replica_id_in_sync_group == 0:
       if self._c.log_scalars:
         self._scalar_summaries(
             data, feat, prior_dist, post_dist, likes, div,
-            model_loss, model_norm)
+            model_loss, value_loss, actor_loss, model_norm, value_norm,
+            actor_norm)
       if tf.equal(log_images, True):
         self._image_summaries(data, embed, image_pred)
-
-  def _scalar_summaries(
-      self, data, feat, prior_dist, post_dist, likes, div,
-      model_loss, model_norm):
-    self._metrics['model_grad_norm'].update_state(model_norm)
-    self._metrics['prior_ent'].update_state(prior_dist.entropy())
-    self._metrics['post_ent'].update_state(post_dist.entropy())
-    for name, logprob in likes.items():
-      self._metrics[name + '_loss'].update_state(-logprob)
-    self._metrics['div'].update_state(div)
-    self._metrics['model_loss'].update_state(model_loss)
 
   def _write_optim_summaries(self):
     metrics = [(k, float(v.result())) for k, v in self._optim_metrics.items()]
