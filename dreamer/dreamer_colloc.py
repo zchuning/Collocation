@@ -138,35 +138,33 @@ class DreamerColloc(Dreamer):
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
-
-    init_residual_func = \
-      lambda x : (x[:, :-self._actdim] - init_feat) * 1000
     lam = tf.ones(hor)
     nu = tf.ones([hor, self._actdim])
-    pair_residual_func = \
-      lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
-    # TODO make the change below (will need to clean up indices and such)
-    # init_residual_func = lambda x_b: pair_residual_func(init_feat, x_b)
 
+    @tf.function
+    def opt_step(plan, init_feat, goal_feat, lam, nu):
+      init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
+      pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
+      plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
+      return plan
+      
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       with timing("Single Gauss-Newton step time: "):
-        plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
+        plan = opt_step(plan, init_feat, goal_feat, lam, nu)
 
       # Update lagrange multipliers
       if i % self._c.lambda_int == self._c.lambda_int - 1:
         dim = plan.shape[-1]
         plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
         plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        res = pair_residual_func(plan_prev, plan_curr)
+        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat, lam, nu)
         dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
         act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         lam += self._c.lambda_lr * dyn_res_sq
         nu += self._c.nu_lr * act_res_sq
-        pair_residual_func = \
-          lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
         print(f"Lagrange multipliers: lambda {lam}, nu {nu}")
 
       # Compute and record dynamics loss and reward
