@@ -100,7 +100,11 @@ class Dreamer(tools.Module):
     self._last_log = None
     self._last_time = time.time()
     self._metrics = collections.defaultdict(tf.metrics.Mean)
-    self._metrics['expl_amount']  # Create variable for checkpoint.
+    # Create variables for checkpoint
+    self._metrics['expl_amount']
+    self._metrics['opt_dynamics']
+    self._metrics['opt_action_violation']
+    self._metrics['opt_rewards']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
