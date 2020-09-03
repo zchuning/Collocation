@@ -38,8 +38,7 @@ from utils import logging
 
 def define_config():
   config = dreamer.define_config()
-  config.precision = 32
-
+  
   # Planning
   config.planning_task = 'colloc_gd'
   config.planning_horizon = 10

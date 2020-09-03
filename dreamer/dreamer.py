@@ -36,7 +36,7 @@ def define_config():
   config.log_scalars = True
   config.log_images = True
   config.gpu_growth = True
-  config.precision = 16
+  config.precision = 32
   # Environment.
   config.task = 'dmc_walker_walk'
   config.envs = 1
@@ -342,6 +342,8 @@ def preprocess(obs, config):
     obs['image'] = tf.cast(obs['image'], dtype) / 255.0 - 0.5
     clip_rewards = dict(none=lambda x: x, tanh=tf.tanh)[config.clip_rewards]
     obs['reward'] = clip_rewards(obs['reward'])
+    for k, v in obs.items():
+      obs[k] = tf.cast(v, dtype)
   return obs
 
 
