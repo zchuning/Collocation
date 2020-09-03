@@ -38,7 +38,7 @@ from utils import logging
 
 def define_config():
   config = dreamer.define_config()
-  
+
   # Planning
   config.planning_task = 'colloc_gd'
   config.planning_horizon = 10
@@ -113,8 +113,12 @@ class DreamerColloc(Dreamer):
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
-    dyn_res = tf.sqrt(lam)[:, None] * (x_b[:, :-self._actdim] - x_b_pred)
-    act_res = tf.sqrt(nu) * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    if lam is not None:
+      dyn_res = tf.sqrt(lam)[:, None] * (x_b[:, :-self._actdim] - x_b_pred)
+      act_res = tf.sqrt(nu) * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    else:
+      dyn_res = x_b[:, :-self._actdim] - x_b_pred
+      act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
@@ -147,7 +151,7 @@ class DreamerColloc(Dreamer):
       pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
       plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
       return plan
-      
+
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
     for i in range(self._c.gd_steps):
@@ -160,12 +164,12 @@ class DreamerColloc(Dreamer):
         dim = plan.shape[-1]
         plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
         plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat, lam, nu)
+        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat, None, None)
         dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
         act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         lam += self._c.lambda_lr * dyn_res_sq
         nu += self._c.nu_lr * act_res_sq
-        print(f"Lagrange multipliers: lambda {lam}, nu {nu}")
+        print(f"lambda:\n{lam}\nnu:\n{nu}")
 
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
