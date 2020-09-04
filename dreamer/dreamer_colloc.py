@@ -113,13 +113,12 @@ class DreamerColloc(Dreamer):
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
-    if lam is not None:
-      dyn_res = tf.sqrt(lam)[:, None] * (x_b[:, :-self._actdim] - x_b_pred)
-      act_res = tf.sqrt(nu) * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
-    else:
-      dyn_res = x_b[:, :-self._actdim] - x_b_pred
-      act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    dyn_res = self._c.dyn_res_wt * x_b[:, :-self._actdim] - x_b_pred
+    act_res = self._c.act_res_wt * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    if lam is not None and nu is not None:
+      dyn_res = tf.sqrt(lam)[:, None] * dyn_res
+      act_res = tf.sqrt(nu) * act_res
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
@@ -154,6 +153,7 @@ class DreamerColloc(Dreamer):
 
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
+    dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       with timing("Single Gauss-Newton step time: "):
@@ -169,7 +169,7 @@ class DreamerColloc(Dreamer):
         act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         lam += self._c.lambda_lr * dyn_res_sq
         nu += self._c.nu_lr * act_res_sq
-        print(f"lambda:\n{lam}\nnu:\n{nu}")
+        # print(f"lambda:\n{lam}\nnu:\n{nu}")
 
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
@@ -184,6 +184,9 @@ class DreamerColloc(Dreamer):
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
+      # Record effective coeffcients
+      dyn_coeffs.append(self._c.dyn_res_wt * tf.reduce_sum(lam))
+      act_coeffs.append(self._c.act_res_wt * tf.reduce_sum(nu))
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
@@ -197,6 +200,8 @@ class DreamerColloc(Dreamer):
       self.logger.log_graph('losses', {f'rewards/{step}': rewards,
                                        f'dynamics/{step}': dyn_losses,
                                        f'action_violation/{step}': act_losses})
+      self.logger.log_graph('coeffs', {f'dynamics_coeff/{step}': dyn_coeffs,
+                                       f'action_coeff/{step}': act_coeffs})
       self.visualize_colloc(img_preds, act_preds, init_feat)
     else:
       img_preds = None
