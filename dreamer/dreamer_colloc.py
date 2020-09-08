@@ -48,8 +48,11 @@ def define_config():
   config.cem_elite_ratio = 0.01
   config.gd_steps = 2000
   config.gd_lr = 0.05
+  config.gn_damping = 1e-3
   config.lambda_int = 50
   config.lambda_lr = 1
+  config.lam_step = 10
+  config.dyn_threshold = 1e-1
   config.nu_lr = 100
   config.dyn_loss_scale = 5000
   config.act_loss_scale = 100
@@ -138,8 +141,10 @@ class DreamerColloc(Dreamer):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
-    damping = 1e-3
-
+    damping = self._c.gn_damping
+    dyn_threshold = self._c.dyn_threshold
+    act_threshold = 1e-1
+  
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
     if goal_obs is not None:
@@ -165,21 +170,9 @@ class DreamerColloc(Dreamer):
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
-      with timing("Single Gauss-Newton step time: "):
-        plan = opt_step(plan, init_feat, goal_feat, lam, nu)
-
-      # Update lagrange multipliers
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
-        dim = plan.shape[-1]
-        plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
-        plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat, None, None)
-        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
-        act_res_sq = tf.square(res[:, -self._actdim-1:-1])
-        lam += self._c.lambda_lr * dyn_res_sq
-        nu += self._c.nu_lr * act_res_sq
-        # print(f"lambda:\n{lam}\nnu:\n{nu}")
-
+      # with timing("Single Gauss-Newton step time: "):
+      plan = opt_step(plan, init_feat, goal_feat, lam, nu)
+    
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
@@ -193,10 +186,29 @@ class DreamerColloc(Dreamer):
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
+    
+      # Update lagrange multipliers
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        dim = plan.shape[-1]
+        plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
+        plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
+        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat)
+        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
+        act_res_sq = tf.square(res[:, -self._actdim-1:-1])
+        if dyn_loss > dyn_threshold:
+          lam = lam * self._c.lam_step
+        if dyn_loss < dyn_threshold / 10:
+          lam = lam / self._c.lam_step
+        if act_loss > act_threshold:
+          nu = nu * self._c.lam_step
+        # lam += self._c.lambda_lr * dyn_res_sq
+        # nu += self._c.nu_lr * act_res_sq
+        # print(f"lambda:\n{lam}\nnu:\n{nu}")
+    
       # Record effective coeffcients
-      dyn_coeffs.append(self._c.dyn_res_wt * tf.reduce_sum(lam))
-      act_coeffs.append(self._c.act_res_wt * tf.reduce_sum(nu))
-
+      dyn_coeffs.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
+      act_coeffs.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
+  
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:
