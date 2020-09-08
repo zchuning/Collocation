@@ -81,6 +81,7 @@ def define_config():
   config.expl_amount = 0.3
   config.expl_decay = 0.0
   config.expl_min = 0.0
+  config.metrics_fix = False
   return config
 
 
@@ -102,9 +103,10 @@ class Dreamer(tools.Module):
     self._metrics = collections.defaultdict(tf.metrics.Mean)
     # Create variables for checkpoint
     self._metrics['expl_amount']
-    self._metrics['opt_dynamics']
-    self._metrics['opt_action_violation']
-    self._metrics['opt_rewards']
+    if not self._c.metrics_fix:
+      self._metrics['opt_dynamics']
+      self._metrics['opt_action_violation']
+      self._metrics['opt_rewards']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()

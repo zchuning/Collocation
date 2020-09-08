@@ -128,9 +128,8 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-    self._metrics['opt_dynamics'].update_state(info[0])
-    self._metrics['opt_action_violation'].update_state(info[1])
-    self._metrics['opt_rewards'].update_state(info[2])
+    for k, v in info.items():
+      self._metrics[f'opt_{k}'].update_state(v)
     return act_pred
 
   def policy(self, obs, state, training):

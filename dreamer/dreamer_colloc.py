@@ -16,8 +16,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
-from blox.utils import AverageMeter
-from blox.utils import timing
+from blox.utils import AverageMeter, timing
+from blox.basic_types import map_dict
 import time
 
 tf.get_logger().setLevel('ERROR')
@@ -195,17 +195,15 @@ class DreamerColloc(Dreamer):
       print(f"Final average action violation: {act_losses[-1] / hor}")
       print(f"Final average reward: {rewards[-1] / hor}")
       print(f"Final average initial state violation: {init_loss}")
+    curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses, dynamics_coeff=dyn_coeffs,
+                  action_coeff=act_coeffs)
     if save_images:
       img_preds = self._decode(feat_preds).mode()
-      self.logger.log_graph('losses', {f'rewards/{step}': rewards,
-                                       f'dynamics/{step}': dyn_losses,
-                                       f'action_violation/{step}': act_losses})
-      self.logger.log_graph('coeffs', {f'dynamics_coeff/{step}': dyn_coeffs,
-                                       f'action_coeff/{step}': act_coeffs})
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
       self.visualize_colloc(img_preds, act_preds, init_feat)
     else:
       img_preds = None
-    info = (dyn_losses[-1] / hor, act_losses[-1] / hor, rewards[-1] / hor)
+    info = map_dict(lambda x: x[-1] / hor, curves)
     return act_preds, img_preds, feat_preds, info
 
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
