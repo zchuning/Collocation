@@ -104,7 +104,7 @@ class DreamerColloc(Dreamer):
     self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
-  def pair_residual_func_body(self, x_a, x_b, goal, lam, nu):
+  def pair_residual_func_body(self, x_a, x_b, goal, lam=np.ones(1, np.float32), nu=np.ones(1, np.float32)):
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
@@ -113,14 +113,23 @@ class DreamerColloc(Dreamer):
     rew = self._reward(x_b[:, :-self._actdim]).mode()
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
-    dyn_res = self._c.dyn_res_wt * x_b[:, :-self._actdim] - x_b_pred
+    dyn_res = x_b[:, :-self._actdim] - x_b_pred
     act_res = self._c.act_res_wt * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
-    if lam is not None and nu is not None:
-      dyn_res = tf.sqrt(lam)[:, None] * dyn_res
-      act_res = tf.sqrt(nu) * act_res
+    # Compute coefficients
+    # TODO redefine weights to not be square roots
+    dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
+    act_c = tf.sqrt(nu) * act_res
+    rew_c = tf.cast(self._c.rew_res_wt, act_c.dtype)
+    normalize = 1000 / (tf.reduce_sum(dyn_c) + tf.reduce_sum(act_c) + tf.reduce_sum(rew_c))
+    dyn_c = dyn_c * normalize
+    act_c = act_c * normalize
+    rew_c = rew_c * normalize
+    
+    dyn_res = dyn_c * dyn_res
+    act_res = act_c * act_res
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
-    rew_res = self._c.rew_res_wt * (1.0 / (rew + 10000))[:, None]
+    rew_res = rew_c * (1.0 / (rew + 10000))[:, None]
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
