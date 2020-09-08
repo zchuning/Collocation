@@ -74,7 +74,7 @@ def gauss_newton_matrix(J_curr, J_prev, damping = 0.0):
   dim_x = J_curr[0].shape[-1]
   D = [None] * T
   B = [None] * (T-1)
-  I = damping * tf.eye(dim_x, batch_shape=[1])
+  I = damping * tf.eye(dim_x, batch_shape=[1], dtype=tf.float64)
   # fill main diagonal
   for t in range(T-1):
     D[t] = I + 2.0 * (tf.matmul(J_curr[t], J_curr[t], transpose_a=True) + \
@@ -242,11 +242,14 @@ def make_blocks(pair_residual_func, init_residual_func, x,
   # compute batch pair residuals and Jacobians
   R_pair, J_pair = jacobian(batch_pair_func, X_pair)
   dim_r = R_pair.shape[-1]
-  R_pair = tf.reshape(R_pair, [-1, T-1, dim_r])
-  J_pair = tf.reshape(J_pair, [-1, T-1, dim_r, 2, dim_x])
-
+  R_pair = tf.reshape(R_pair, [-1, T - 1, dim_r])
+  J_pair = tf.reshape(J_pair, [-1, T - 1, dim_r, 2, dim_x])
+  R_pair = tf.cast(R_pair, tf.float64)
+  J_pair = tf.cast(J_pair, tf.float64)
   # initial condition residuals and Jacobians
-  R_init, J_init = jacobian(init_residual_func, x[:,0,:])
+  R_init, J_init = jacobian(init_residual_func, x[:, 0, :])
+  R_init = tf.cast(R_init, tf.float64)
+  J_init = tf.cast(J_init, tf.float64)
 
   # incorporate loss derivaties into residuals and Jacobians
   if pair_loss_func:
@@ -310,7 +313,7 @@ def solve_step(pair_residual_function, init_residual_function, x,
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, fixed_damping_amount)
-  dx = tf.stack(dx, axis=1)
+  dx = tf.cast(tf.stack(dx, axis=1), tf.float32)
   return x - noise_amount*dx
 
 @tf.function
@@ -319,5 +322,5 @@ def solve_step_inference(pair_residual_function, init_residual_function, x,
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
-  dx = tf.stack(dx, axis=1)
+  dx = tf.cast(tf.stack(dx, axis=1), tf.float32)
   return x - dx
