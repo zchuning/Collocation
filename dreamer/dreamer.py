@@ -104,9 +104,11 @@ class Dreamer(tools.Module):
     # Create variables for checkpoint
     self._metrics['expl_amount']
     if not self._c.metrics_fix:
+      self._metrics['opt_rewards']
       self._metrics['opt_dynamics']
       self._metrics['opt_action_violation']
-      self._metrics['opt_rewards']
+      self._metrics['opt_dynamics_coeff']
+      self._metrics['opt_action_coeff']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
@@ -333,7 +335,7 @@ class Dreamer(tools.Module):
     with (self._c.logdir / 'metrics.jsonl').open('a') as f:
       f.write(json.dumps({'step': step, **dict(metrics)}) + '\n')
     [tf.summary.scalar('agent/' + k, m) for k, m in metrics]
-    print(f'[{step}]', ' / '.join(f'{k} {v:.1f}' for k, v in metrics))
+    print(f'[{step}]: {self._c.logdir} , ', ' / '.join(f'{k} {v:.1f}' for k, v in metrics))
     self._writer.flush()
 
 

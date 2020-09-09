@@ -103,6 +103,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       if tf.equal(log_images, True):
         self._image_summaries(data, embed, image_pred)
 
+  @tf.function
   def _policy_summaries(self, feat_pred, act_pred, init_feat):
     # Collocation
     img_pred = self._decode(feat_pred).mode()
@@ -119,7 +120,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model_mean', img_pred + 0.5)
 
-  @tf.function
+  # @tf.function
   def plan(self, feat, log_images):
     # TODO speed this up
     # Note: it is possible to get rid of tf.function by removing lambda-functions in collocation_so. This is possible

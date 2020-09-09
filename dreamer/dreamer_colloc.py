@@ -53,6 +53,7 @@ def define_config():
   config.lambda_lr = 1
   config.lam_step = 10
   config.dyn_threshold = 1e-1
+  config.coeff_normalization = 10000
   config.nu_lr = 100
   config.dyn_loss_scale = 5000
   config.act_loss_scale = 100
@@ -124,7 +125,7 @@ class DreamerColloc(Dreamer):
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
     act_c = tf.sqrt(nu) * act_res
     rew_c = tf.cast(self._c.rew_res_wt, act_c.dtype)
-    normalize = 1000 / (tf.reduce_sum(dyn_c) + tf.reduce_sum(act_c) + tf.reduce_sum(rew_c))
+    normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
     act_c = act_c * normalize
     rew_c = rew_c * normalize
@@ -136,7 +137,14 @@ class DreamerColloc(Dreamer):
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
-
+  
+  @tf.function
+  def opt_step(self, plan, init_feat, goal_feat, lam, nu):
+    init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
+    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
+    plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=self._c.gn_damping)
+    return plan
+  
   def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -157,14 +165,7 @@ class DreamerColloc(Dreamer):
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
     lam = tf.ones(hor)
     nu = tf.ones([hor, self._actdim])
-
-    @tf.function
-    def opt_step(plan, init_feat, goal_feat, lam, nu):
-      init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
-      pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
-      plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=damping)
-      return plan
-
+    
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
     dyn_coeffs, act_coeffs = [], []
@@ -199,7 +200,7 @@ class DreamerColloc(Dreamer):
           lam = lam * self._c.lam_step
         if dyn_loss < dyn_threshold / 10:
           lam = lam / self._c.lam_step
-        if act_loss > act_threshold:
+        if act_loss / hor > act_threshold:
           nu = nu * self._c.lam_step
         # lam += self._c.lambda_lr * dyn_res_sq
         # nu += self._c.nu_lr * act_res_sq
