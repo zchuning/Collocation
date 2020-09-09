@@ -8,6 +8,12 @@ import numpy as np
 import tensorflow.compat.v2 as tf
 tf.enable_v2_behavior()
 
+def debug_cholesky(l):
+  tf.print(f"Matrix: {l}")
+  tf.print(f"Determinant: {tf.linalg.det(l)}")
+  e, v = tf.linalg.eigh(l)
+  tf.print(f"Eigenvalues: {e}")
+  tf.print(f"# NaNs: {tf.reduce_sum(tf.cast(tf.math.is_nan(l), tf.float32))}")
 
 # Factorize block tridiagonal symmetric positive definite matrix.
 # See: https://software.intel.com/en-us/node/531896
@@ -17,6 +23,8 @@ def factorize(D, B):
   T = len(D)
   L = [None] * T #tf.TensorArray(tf.float32, T)
   C = [None] * T #tf.TensorArray(tf.float32, T)
+  # Debug cholesky
+  # debug_cholesky(D[0])
   L[0] = tf.linalg.cholesky(D[0])
   for t in range(T-1):
     # solve c = b * L^{-T}
@@ -25,6 +33,8 @@ def factorize(D, B):
     c = tf.transpose(c_tr, [0, 2, 1])
     l = D[t+1] - tf.matmul(c, c, transpose_b = True)
     C[t] = c
+    # Debug cholesky
+    # debug_cholesky(l)
     L[t+1] = tf.linalg.cholesky(l)
   return L, C
 
@@ -74,17 +84,20 @@ def gauss_newton_matrix(J_curr, J_prev, damping = 0.0):
   dim_x = J_curr[0].shape[-1]
   D = [None] * T
   B = [None] * (T-1)
-  I = damping * tf.eye(dim_x, batch_shape=[1])
+  # I = damping * tf.eye(dim_x, batch_shape=[1], dtype=tf.float64)
+  damp = damping * tf.eye(dim_x, batch_shape=[1], dtype=tf.float64)
+  diag_scale = 0.01 * damping * tf.eye(dim_x, batch_shape=[1], dtype=tf.float64)
   # fill main diagonal
   for t in range(T-1):
-    D[t] = I + 2.0 * (tf.matmul(J_curr[t], J_curr[t], transpose_a=True) + \
+    D[t] = 2.0 * (tf.matmul(J_curr[t], J_curr[t], transpose_a=True) + \
        tf.matmul(J_prev[t], J_prev[t], transpose_a=True))
-  D[T-1] = I + 2.0 * tf.matmul(J_curr[T-1], J_curr[T-1], transpose_a=True)
+    D[t] = D[t] + damp + diag_scale * D[t]
+  D[T-1] = 2.0 * tf.matmul(J_curr[T-1], J_curr[T-1], transpose_a=True)
+  D[T-1] = D[T-1] + damp + diag_scale * D[T-1]
   # fill lower diagonal
   for t in range(T-1):
     B[t] = 2.0 * tf.matmul(J_curr[t+1], J_prev[t], transpose_a=True)
   return D, B
-
 
 # Build gradient of sum of squared residuals from residuals and their Jacobians.
 # If J is a matrix with J_curr in main diagonal and J_prev in lower diagonal,
@@ -244,9 +257,13 @@ def make_blocks(pair_residual_func, init_residual_func, x,
   dim_r = R_pair.shape[-1]
   R_pair = tf.reshape(R_pair, [-1, T-1, dim_r])
   J_pair = tf.reshape(J_pair, [-1, T-1, dim_r, 2, dim_x])
+  R_pair = tf.cast(R_pair, tf.float64)
+  J_pair = tf.cast(J_pair, tf.float64)
 
   # initial condition residuals and Jacobians
   R_init, J_init = jacobian(init_residual_func, x[:,0,:])
+  R_init = tf.cast(R_init, tf.float64)
+  J_init = tf.cast(J_init, tf.float64)
 
   # incorporate loss derivaties into residuals and Jacobians
   if pair_loss_func:
@@ -254,7 +271,7 @@ def make_blocks(pair_residual_func, init_residual_func, x,
     # target adjustment is: G = J' * L_rr * J, g = J * L_r
     # this function outputs J and r only, such that G = J'*J, g = J*r
     # so we can compensate:
-    R_pair = 0.5 * L_r# / tf.sqrt(0.5 * L_rr)
+    R_pair = 0.5 * L_r # / tf.sqrt(0.5 * L_rr)
     L_rr = tf.reshape(L_rr, [-1, T-1, dim_r, 1])
     # J_pair = J_pair * tf.sqrt(0.5 * L_rr)
     M = tf.sqrt(0.5 * L_rr)
@@ -313,11 +330,12 @@ def solve_step(pair_residual_function, init_residual_function, x,
   dx = tf.stack(dx, axis=1)
   return x - noise_amount*dx
 
-@tf.function
+# @tf.function
 def solve_step_inference(pair_residual_function, init_residual_function, x,
                pair_loss_func = None, damping=0.0, noise_amount=None):
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
   dx = tf.stack(dx, axis=1)
+  dx = tf.cast(dx, tf.float32)
   return x - dx
