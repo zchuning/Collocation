@@ -129,7 +129,7 @@ class DreamerColloc(Dreamer):
     dyn_c = dyn_c * normalize
     act_c = act_c * normalize
     rew_c = rew_c * normalize
-    
+
     dyn_res = dyn_c * dyn_res
     act_res = act_c * act_res
     # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
@@ -137,14 +137,14 @@ class DreamerColloc(Dreamer):
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
-  
+
   @tf.function
   def opt_step(self, plan, init_feat, goal_feat, lam, nu):
     init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
     pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
     plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=self._c.gn_damping)
     return plan
-  
+
   def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -152,7 +152,7 @@ class DreamerColloc(Dreamer):
     damping = self._c.gn_damping
     dyn_threshold = self._c.dyn_threshold
     act_threshold = 1e-1
-  
+
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
     if goal_obs is not None:
@@ -165,15 +165,15 @@ class DreamerColloc(Dreamer):
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
     lam = tf.ones(hor)
     nu = tf.ones([hor, self._actdim])
-    
+
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
-      plan = opt_step(plan, init_feat, goal_feat, lam, nu)
-    
+      plan = self.opt_step(plan, init_feat, goal_feat, lam, nu)
+
       # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
@@ -187,7 +187,7 @@ class DreamerColloc(Dreamer):
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
-    
+
       # Update lagrange multipliers
       if i % self._c.lambda_int == self._c.lambda_int - 1:
         dim = plan.shape[-1]
@@ -205,11 +205,11 @@ class DreamerColloc(Dreamer):
         # lam += self._c.lambda_lr * dyn_res_sq
         # nu += self._c.nu_lr * act_res_sq
         # print(f"lambda:\n{lam}\nnu:\n{nu}")
-    
+
       # Record effective coeffcients
       dyn_coeffs.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
       act_coeffs.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
-  
+
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:
