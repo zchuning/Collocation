@@ -150,6 +150,7 @@ class DreamerColloc(Dreamer):
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
     damping = self._c.gn_damping
+    coeff_upperbound = 1e10
     dyn_threshold = self._c.dyn_threshold
     act_threshold = 1e-1
 
@@ -188,6 +189,12 @@ class DreamerColloc(Dreamer):
       act_losses.append(act_loss)
       rewards.append(reward)
 
+      dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
+      act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
+      # Record effective coeffcients
+      dyn_coeffs.append(dyn_coeff)
+      act_coeffs.append(act_coeff)
+
       # Update lagrange multipliers
       if i % self._c.lambda_int == self._c.lambda_int - 1:
         dim = plan.shape[-1]
@@ -196,19 +203,15 @@ class DreamerColloc(Dreamer):
         res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat)
         dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
         act_res_sq = tf.square(res[:, -self._actdim-1:-1])
-        if dyn_loss > dyn_threshold:
-          lam = lam * self._c.lam_step
+        if dyn_loss > dyn_threshold and dyn_coeff < coeff_upperbound:
+            lam = lam * self._c.lam_step
         if dyn_loss < dyn_threshold / 10:
           lam = lam / self._c.lam_step
-        if act_loss / hor > act_threshold:
+        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
         # lam += self._c.lambda_lr * dyn_res_sq
         # nu += self._c.nu_lr * act_res_sq
         # print(f"lambda:\n{lam}\nnu:\n{nu}")
-
-      # Record effective coeffcients
-      dyn_coeffs.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
-      act_coeffs.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
