@@ -118,12 +118,12 @@ class DreamerColloc(Dreamer):
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
-    act_res = self._c.act_res_wt * tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # Compute coefficients
     # TODO redefine weights to not be square roots
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
-    act_c = tf.sqrt(nu) * act_res
+    act_c = tf.sqrt(nu) * self._c.act_res_wt
     rew_c = tf.cast(self._c.rew_res_wt, act_c.dtype)
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
@@ -132,8 +132,8 @@ class DreamerColloc(Dreamer):
 
     dyn_res = dyn_c * dyn_res
     act_res = act_c * act_res
-    # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     rew_res = rew_c * (1.0 / (rew + 10000))[:, None]
+    # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
     # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
