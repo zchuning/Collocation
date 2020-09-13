@@ -46,6 +46,7 @@ def define_config():
   config.prefill = 5000
   config.eval_noise = 0.0
   config.clip_rewards = 'none'
+  config.save_sparse_rewards = False
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -378,6 +379,8 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       (f'{prefix}/return', float(episode['reward'].sum())),
       (f'{prefix}/length', len(episode['reward']) - 1),
       (f'episodes', episodes)]
+  if config.save_sparse_rewards:
+    metrics.append((f'{prefix}/sparse_return', float(episode['sparse_reward'].sum())))
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
     f.write(json.dumps(dict([('step', step)] + metrics)) + '\n')
@@ -396,7 +399,7 @@ def make_env(config, writer, prefix, datadir, store):
     callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
   callbacks.append(
       lambda ep: summarize_episode(ep, config, datadir, writer, prefix))
-  env = wrappers.Collect(env, callbacks, config.precision)
+  env = wrappers.Collect(env, callbacks, config.precision, config.save_sparse_rewards)
   env = wrappers.RewardObs(env)
   return env
 

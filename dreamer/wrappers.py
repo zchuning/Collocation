@@ -118,12 +118,12 @@ class MetaWorld(DreamerEnv):
     self._offscreen.cam.lookat[0] = 1.1
     self._offscreen.cam.lookat[1] = 1.1
     self._offscreen.cam.lookat[2] = -0.1
-  
+
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
-    self._env.hand_init_pos = np.array([0, .6, .1])
+    # self._env.hand_init_pos = np.array([0, .6, .1])
     return super().reset()
-  
+
   def step(self, action):
     total_reward = 0.0
     for step in range(self._action_repeat):
@@ -223,11 +223,12 @@ class DeepMindControl:
 
 class Collect:
 
-  def __init__(self, env, callbacks=None, precision=32):
+  def __init__(self, env, callbacks=None, precision=32, save_sparse_rewards=False):
     self._env = env
     self._callbacks = callbacks or ()
     self._precision = precision
     self._episode = None
+    self._save_sparse_rewards = save_sparse_rewards
 
   def __getattr__(self, name):
     return getattr(self._env, name)
@@ -238,6 +239,8 @@ class Collect:
     transition = obs.copy()
     transition['action'] = action
     transition['reward'] = reward
+    if self._save_sparse_rewards:
+      transition['sparse_reward'] = info.get('success')
     transition['discount'] = info.get('discount', np.array(1 - float(done)))
     self._episode.append(transition)
     if done:
@@ -254,6 +257,8 @@ class Collect:
     transition['action'] = np.zeros(self._env.action_space.shape)
     transition['reward'] = 0.0
     transition['discount'] = 1.0
+    if self._save_sparse_rewards:
+      transition['sparse_reward'] = 0.0
     self._episode = [transition]
     return obs
 

@@ -124,6 +124,7 @@ class DreamerColloc(Dreamer):
     # TODO redefine weights to not be square roots
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
     act_c = tf.sqrt(nu) * self._c.act_res_wt
+    # rew_c = tf.cast(1.0 + (self._c.rew_res_wt * (1 - self._step / self._c.steps)), act_c.dtype)
     rew_c = tf.cast(self._c.rew_res_wt, act_c.dtype)
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
