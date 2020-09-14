@@ -223,12 +223,12 @@ class DeepMindControl:
 
 class Collect:
 
-  def __init__(self, env, callbacks=None, precision=32, save_sparse_rewards=False):
+  def __init__(self, env, callbacks=None, precision=32, save_sparse_reward=False):
     self._env = env
     self._callbacks = callbacks or ()
     self._precision = precision
     self._episode = None
-    self._save_sparse_rewards = save_sparse_rewards
+    self._save_sparse_reward = save_sparse_reward
 
   def __getattr__(self, name):
     return getattr(self._env, name)
@@ -239,7 +239,7 @@ class Collect:
     transition = obs.copy()
     transition['action'] = action
     transition['reward'] = reward
-    if self._save_sparse_rewards:
+    if self._save_sparse_reward:
       transition['sparse_reward'] = info.get('success')
     transition['discount'] = info.get('discount', np.array(1 - float(done)))
     self._episode.append(transition)
@@ -257,7 +257,7 @@ class Collect:
     transition['action'] = np.zeros(self._env.action_space.shape)
     transition['reward'] = 0.0
     transition['discount'] = 1.0
-    if self._save_sparse_rewards:
+    if self._save_sparse_reward:
       transition['sparse_reward'] = 0.0
     self._episode = [transition]
     return obs

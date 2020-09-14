@@ -46,7 +46,7 @@ def define_config():
   config.prefill = 5000
   config.eval_noise = 0.0
   config.clip_rewards = 'none'
-  config.save_sparse_rewards = False
+  config.sparse_reward = False
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -66,6 +66,7 @@ def define_config():
   config.batch_length = 50
   config.train_every = 1000
   config.train_steps = 100
+  config.train_store = True
   config.pretrain = 100
   config.model_lr = 6e-4
   config.value_lr = 8e-5
@@ -171,7 +172,10 @@ class Dreamer(tools.Module):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if self._c.sparse_reward:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
+      else:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
@@ -379,7 +383,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       (f'{prefix}/return', float(episode['reward'].sum())),
       (f'{prefix}/length', len(episode['reward']) - 1),
       (f'episodes', episodes)]
-  if config.save_sparse_rewards:
+  if config.sparse_reward:
     metrics.append((f'{prefix}/sparse_return', float(episode['sparse_reward'].sum())))
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
@@ -399,7 +403,7 @@ def make_env(config, writer, prefix, datadir, store):
     callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
   callbacks.append(
       lambda ep: summarize_episode(ep, config, datadir, writer, prefix))
-  env = wrappers.Collect(env, callbacks, config.precision, config.save_sparse_rewards)
+  env = wrappers.Collect(env, callbacks, config.precision, config.sparse_reward)
   env = wrappers.RewardObs(env)
   return env
 
@@ -445,7 +449,7 @@ def main(config):
       str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()
   train_envs = [wrappers.Async(lambda: make_env(
-      config, writer, 'train', datadir, store=True), config.parallel)
+      config, writer, 'train', datadir, store=config.train_store), config.parallel)
       for _ in range(config.envs)]
   test_envs = [wrappers.Async(lambda: make_env(
       config, writer, 'test', datadir, store=False), config.parallel)
