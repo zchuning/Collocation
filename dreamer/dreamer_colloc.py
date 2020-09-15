@@ -46,6 +46,8 @@ def define_config():
   config.cem_steps = 60
   config.cem_batch_size = 10000
   config.cem_elite_ratio = 0.01
+  config.mppi = False
+  config.mppi_gamma = 0.0001
   config.gd_steps = 2000
   config.gd_lr = 0.05
   config.gn_damping = 1e-3
@@ -205,10 +207,10 @@ class DreamerColloc(Dreamer):
         dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
         act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         if dyn_loss > dyn_threshold and dyn_coeff < coeff_upperbound:
-            lam = lam * self._c.lam_step
+          lam = lam * self._c.lam_step
         if dyn_loss < dyn_threshold / 10:
           lam = lam / self._c.lam_step
-        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
+        if act_loss > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
         # lam += self._c.lambda_lr * dyn_res_sq
         # nu += self._c.nu_lr * act_res_sq
@@ -585,7 +587,6 @@ class DreamerColloc(Dreamer):
 
     # CEM loop:
     dyn_loss, rewards = [], []
-    gamma = 0.00001
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     for i in range(self._c.cem_steps):
@@ -600,15 +601,15 @@ class DreamerColloc(Dreamer):
       elite_dyn_frame = tf.gather(dyn_frame, elite_inds)
       elite_samples = tf.gather(samples, elite_inds)
       # Refit distribution
-      means = tf.reduce_mean(elite_samples, axis=0)
-      stds = tf.math.reduce_std(elite_samples, axis=0)
-      # MPPI
-      # elite_fitness = tf.gather(fitness, elite_inds)
-      # weights = tf.expand_dims(tf.nn.softmax(gamma * elite_fitness), axis=1)
-      # means = tf.reduce_sum(weights * elite_samples, axis=0)
-      # stds = tf.sqrt(tf.reduce_sum(weights * tf.square(elite_samples - means), axis=0))
+      if self._c.mppi:
+        elite_fitness = tf.gather(fitness, elite_inds)
+        weights = tf.expand_dims(tf.nn.softmax(self._c.mppi_gamma * elite_fitness), axis=1)
+        means = tf.reduce_sum(weights * elite_samples, axis=0)
+        stds = tf.sqrt(tf.reduce_sum(weights * tf.square(elite_samples - means), axis=0))
+      else:
+        means = tf.reduce_mean(elite_samples, axis=0)
+        stds = tf.math.reduce_std(elite_samples, axis=0)
       # Lagrange multiplier
-      # Update lambdas at a slower rate
       if i % self._c.lambda_int == self._c.lambda_int - 1:
         lambdas += tf.reduce_mean(elite_dyn_frame, axis=0)
         print(tf.reduce_mean(dyn_frame, axis=0))
@@ -657,8 +658,14 @@ class DreamerColloc(Dreamer):
       # Refit distribution to elite samples
       _, elite_inds = tf.nn.top_k(fitness, elite_size, sorted=False)
       elite_samples = tf.gather(samples, elite_inds)
-      means, vars = tf.nn.moments(elite_samples, 0)
-      stds = tf.sqrt(vars + 1e-6)
+      if self._c.mppi:
+        elite_fitness = tf.gather(fitness, elite_inds)
+        weights = tf.expand_dims(tf.nn.softmax(self._c.mppi_gamma * elite_fitness), axis=1)
+        means = tf.reduce_sum(weights * elite_samples, axis=0)
+        stds = tf.sqrt(tf.reduce_sum(weights * tf.square(elite_samples - means), axis=0))
+      else:
+        means, vars = tf.nn.moments(elite_samples, 0)
+        stds = tf.sqrt(vars + 1e-6)
 
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
