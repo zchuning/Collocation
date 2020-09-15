@@ -95,20 +95,20 @@ class DreamerColloc(Dreamer):
   def decode_feats(self, feats):
     return self._decode(feats).mode()
 
-  def visualize_colloc(self, img_pred, act_pred, init_feat):
+  def visualize_colloc(self, img_pred, act_pred, init_feat, step=-1):
     # Use actions to predict trajectory
     feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat)
     model_imgs = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode().numpy()
-    self.logger.log_video("model", model_imgs)
+    self.logger.log_video(f"model/{step}", model_imgs)
 
     # Deterministic prediction
     feat_pred = self._dynamics.imagine_feat(act_pred[None], init_feat, deterministic=True)
     model_imgs = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode().numpy()
-    self.logger.log_video("model_mean", model_imgs)
+    self.logger.log_video(f"model_mean/{step}", model_imgs)
 
     # Write images
-    self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
-    self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
+    # self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
+    # self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
   def pair_residual_func_body(self, x_a, x_b, goal, lam=np.ones(1, np.float32), nu=np.ones(1, np.float32)):
     actions_a = x_a[:, -self._actdim:][None]
@@ -152,7 +152,6 @@ class DreamerColloc(Dreamer):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
-    damping = self._c.gn_damping
     coeff_upperbound = 1e10
     dyn_threshold = self._c.dyn_threshold
     act_threshold = 1e-1
@@ -192,9 +191,9 @@ class DreamerColloc(Dreamer):
       act_losses.append(act_loss)
       rewards.append(reward)
 
+      # Record effective coeffcients
       dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
       act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
-      # Record effective coeffcients
       dyn_coeffs.append(dyn_coeff)
       act_coeffs.append(act_coeff)
 
@@ -203,18 +202,12 @@ class DreamerColloc(Dreamer):
         dim = plan.shape[-1]
         plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
         plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        res = self.pair_residual_func_body(plan_prev, plan_curr, goal_feat)
-        dyn_res_sq = tf.reduce_sum(tf.square(res[:, :-self._actdim-1]), axis=1)
-        act_res_sq = tf.square(res[:, -self._actdim-1:-1])
         if dyn_loss > dyn_threshold and dyn_coeff < coeff_upperbound:
           lam = lam * self._c.lam_step
         if dyn_loss < dyn_threshold / 10:
           lam = lam / self._c.lam_step
         if act_loss > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
-        # lam += self._c.lambda_lr * dyn_res_sq
-        # nu += self._c.nu_lr * act_res_sq
-        # print(f"lambda:\n{lam}\nnu:\n{nu}")
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
@@ -223,12 +216,12 @@ class DreamerColloc(Dreamer):
       print(f"Final average action violation: {act_losses[-1] / hor}")
       print(f"Final average reward: {rewards[-1] / hor}")
       print(f"Final average initial state violation: {init_loss}")
-    curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses, dynamics_coeff=dyn_coeffs,
-                  action_coeff=act_coeffs)
+    curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses,
+                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs)
     if save_images:
       img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
-      self.visualize_colloc(img_preds, act_preds, init_feat)
+      self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
       img_preds = None
     info = map_dict(lambda x: x[-1] / hor, curves)
@@ -805,28 +798,31 @@ def colloc_simulate(agent, config, env, save_images=True):
       img_pred = None
     else:
       raise ValueError("Unimplemented planning task")
-    act_pred_np = act_pred.numpy()
-    act_preds.append(act_pred_np)
-    if img_pred is not None:
-      img_preds.append(img_pred.numpy())
     # Simluate in environment
+    act_pred_np = act_pred.numpy()
     for j in range(len(act_pred_np)):
       obs, reward, done, _ = env.step(act_pred_np[j])
       total_reward += reward
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
+    # Logging
+    act_preds.append(act_pred_np)
+    if img_pred is not None:
+      img_preds.append(img_pred.numpy())
+      agent.logger.log_video(f"plan/{i}", img_pred.numpy())
+    agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
   print(f"Planning time: {end - start}")
   if save_images:
     if img_pred is not None:
       img_preds = np.vstack(img_preds)
       # TODO mark beginning in the gif
-      agent.logger.log_video("plan", img_preds)
-    agent.logger.log_video("execution", frames)
+      agent.logger.log_video("plan/full", img_preds)
+    agent.logger.log_video("execution/full", frames)
   print("Total reward: " + str(total_reward))
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  import pdb; pdb.set_trace()
   agent._reward(feat_pred).mean()
+  import pdb; pdb.set_trace()
 
   return total_reward
 
