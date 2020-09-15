@@ -55,6 +55,7 @@ def define_config():
   config.lambda_lr = 1
   config.lam_step = 10
   config.dyn_threshold = 1e-1
+  config.act_threshold = 1e-1
   config.coeff_normalization = 10000
   config.nu_lr = 100
   config.dyn_loss_scale = 5000
@@ -154,7 +155,7 @@ class DreamerColloc(Dreamer):
     var_len_step = feat_size + self._actdim
     coeff_upperbound = 1e10
     dyn_threshold = self._c.dyn_threshold
-    act_threshold = 1e-1
+    act_threshold = self._c.act_threshold
 
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
@@ -208,6 +209,8 @@ class DreamerColloc(Dreamer):
           lam = lam / self._c.lam_step
         if act_loss > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
+        if act_loss < act_threshold / 10:
+          nu = nu / self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
@@ -791,8 +794,10 @@ def colloc_simulate(agent, config, env, save_images=True):
       act_pred, img_pred, feat_pred = agent.collocation_so_goal_1(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
-    elif pt == 'shooting':
+    elif pt == 'shooting_cem':
       act_pred, img_pred = agent.shooting_cem(obs)
+    elif pt == 'shooting_gd':
+      act_pred, img_pred = agent.shooting_gd(obs)
     elif pt == 'random':
       act_pred = tf.random.uniform((config.mpc_steps,) + actspace.shape, actspace.low[0], actspace.high[0])
       img_pred = None
