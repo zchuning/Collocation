@@ -60,6 +60,7 @@ def define_config():
   config.nu_lr = 100
   config.dyn_loss_scale = 5000
   config.act_loss_scale = 100
+  config.rew_loss_scale = 1
   config.rew_res_wt = 1
   config.dyn_res_wt = 1
   config.act_res_wt = 1
@@ -177,22 +178,26 @@ class DreamerColloc(Dreamer):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
       plan = self.opt_step(plan, init_feat, goal_feat, lam, nu)
-
-      # Compute and record dynamics loss and reward
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
+      plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
+
+      # Compute and record dynamics loss and reward
       init_loss = tf.linalg.norm(feat_preds[0:1] - init_feat)
       reward = tf.reduce_sum(self._reward(feat_preds).mode())
       states = self._dynamics.from_feat(feat_preds[None, :-1])
       priors = self._dynamics.img_step(states, act_preds[None, :-1])
       priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
-      dyn_loss = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]))
-      act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds) - 1, 0, np.inf))
+      dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]), 1)
+      act_viol = tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf)
+
+      # Record losses and effective coefficients
+      dyn_loss = tf.reduce_sum(dyn_viol)
+      act_loss = tf.reduce_sum(act_viol)
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
-
-      # Record effective coeffcients
       dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
       act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
       dyn_coeffs.append(dyn_coeff)
@@ -200,17 +205,18 @@ class DreamerColloc(Dreamer):
 
       # Update lagrange multipliers
       if i % self._c.lambda_int == self._c.lambda_int - 1:
-        dim = plan.shape[-1]
-        plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
-        plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
-          lam = lam * self._c.lam_step
-        if dyn_loss / hor < dyn_threshold / 10:
-          lam = lam / self._c.lam_step
-        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
-          nu = nu * self._c.lam_step
-        if act_loss / hor < act_threshold / 10:
-          nu = nu / self._c.lam_step
+        lam = tf.where(dyn_viol > dyn_threshold, lam * self._c.lam_step, lam)
+        lam = tf.where(dyn_viol < dyn_threshold / 10, lam / self._c.lam_step, lam)
+        nu = tf.where(act_viol > act_threshold, nu * self._c.lam_step, nu)
+        nu = tf.where(act_viol < act_threshold / 10, nu / self._c.lam_step, nu)
+        # if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
+        #   lam = lam * self._c.lam_step
+        # if dyn_loss / hor < dyn_threshold / 10:
+        #   lam = lam / self._c.lam_step
+        # if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
+        #   nu = nu * self._c.lam_step
+        # if act_loss / hor < act_threshold / 10:
+        #   nu = nu / self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
@@ -640,9 +646,10 @@ class DreamerColloc(Dreamer):
         reward = tf.reduce_sum(self._reward(feats).mode(), axis=1)
         actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
         actions_constr = tf.reduce_sum(lambdas * actions_viol)
-        fitness = - reward + self._c.act_loss_scale * actions_constr
+        fitness = - self._c.rew_loss_scale * reward + self._c.act_loss_scale * actions_constr
       grad = g.gradient(fitness, t)
       opt.apply_gradients([(grad, t)])
+      t.assign(tf.clip_by_value(t, min_action, max_action)) # Prevent OOD preds
       act_loss.append(tf.reduce_sum(actions_viol))
       rewards.append(reward)
       if i % self._c.lambda_int == self._c.lambda_int - 1:
