@@ -620,6 +620,53 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
 
+  def shooting_gd(self, obs, min_action=-1, max_action=1):
+    horizon = self._c.planning_horizon
+    mpc_steps = self._c.mpc_steps
+
+    # Initialize decision variables
+    init_feat, _ = self.get_init_feat(obs)
+    t = tf.Variable(tf.random.normal((horizon, self._actdim), dtype=self._float))
+    lambdas = tf.ones([horizon, self._actdim])
+    act_loss, rewards = [], []
+    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
+    # Gradient descent loop
+    for i in range(self._c.gd_steps):
+      # print("Gradient descent step {0}".format(i + 1))
+      with tf.GradientTape() as g:
+        g.watch(t)
+        actions = t[None, :]
+        feats = self._dynamics.imagine_feat(actions, init_feat, deterministic=True)
+        reward = tf.reduce_sum(self._reward(feats).mode(), axis=1)
+        actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
+        actions_constr = tf.reduce_sum(lambdas * actions_viol)
+        fitness = - reward + self._c.act_loss_scale * actions_constr
+      grad = g.gradient(fitness, t)
+      opt.apply_gradients([(grad, t)])
+      act_loss.append(tf.reduce_sum(actions_viol))
+      rewards.append(reward)
+      if i % self._c.lambda_int == self._c.lambda_int - 1:
+        lambdas += self._c.lambda_lr * actions_viol
+        # print(tf.reduce_mean(log_prob_frame, axis=0))
+        # print(f"Lambdas: {lambdas}\n Nus: {nus}")
+
+    act_pred = t[:min(horizon, mpc_steps)]
+    feat_pred = feats
+    img_pred = self._decode(feat_pred).mode()
+    print(f"Final average action violation: {act_loss[-1] / horizon}")
+    print(f"Final average reward: {rewards[-1] / horizon}")
+    if self._c.visualize:
+      img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
+      import matplotlib.pyplot as plt
+      plt.title("Reward Curve")
+      plt.plot(range(len(rewards)), rewards)
+      plt.savefig('./lr.jpg')
+      plt.show()
+    else:
+      img_pred = None
+    return act_pred, img_pred
+
+
   def shooting_cem(self, obs, min_action=-1, max_action=1):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
@@ -633,10 +680,11 @@ class DreamerColloc(Dreamer):
     def eval_fitness(t):
       init_feats = tf.tile(init_feat, [batch, 1])
       actions = tf.reshape(t, [batch, horizon, -1])
-      init_states = {'stoch': init_feats[:, :self._c.stoch_size],
-                     'deter': init_feats[:, self._c.stoch_size:]}
-      priors = self._dynamics.imagine(actions, init_states)
-      feats = tf.squeeze(tf.concat([priors['stoch'], priors['deter']], axis=-1))
+      # init_states = {'stoch': init_feats[:, :self._c.stoch_size],
+      #                'deter': init_feats[:, self._c.stoch_size:]}
+      # priors = self._dynamics.imagine(actions, init_states)
+      # feats = tf.squeeze(tf.concat([priors['stoch'], priors['deter']], axis=-1))
+      feats = self._dynamics.imagine_feat(actions, init_feats, deterministic=True)
       rewards = tf.reduce_sum(self._reward(feats).mode(), axis=1)
       return rewards, feats
 
@@ -645,7 +693,7 @@ class DreamerColloc(Dreamer):
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     for i in range(self._c.cem_steps):
-      print("CEM step {0} of {1}".format(i + 1, self._c.cem_steps))
+      # print("CEM step {0} of {1}".format(i + 1, self._c.cem_steps))
       # Sample action sequences and evaluate fitness
       samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch])
       samples = tf.clip_by_value(samples, min_action, max_action)
@@ -826,7 +874,6 @@ def colloc_simulate(agent, config, env, save_images=True):
     agent.logger.log_video("execution/full", frames)
   print("Total reward: " + str(total_reward))
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  agent._reward(feat_pred).mean()
   import pdb; pdb.set_trace()
 
   return total_reward
