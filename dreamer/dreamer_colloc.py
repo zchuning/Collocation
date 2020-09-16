@@ -203,13 +203,13 @@ class DreamerColloc(Dreamer):
         dim = plan.shape[-1]
         plan_prev = tf.reshape(plan[:,:-1,:], [-1, dim])
         plan_curr = tf.reshape(plan[:,+1:,:], [-1, dim])
-        if dyn_loss > dyn_threshold and dyn_coeff < coeff_upperbound:
+        if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
           lam = lam * self._c.lam_step
-        if dyn_loss < dyn_threshold / 10:
+        if dyn_loss / hor < dyn_threshold / 10:
           lam = lam / self._c.lam_step
-        if act_loss > act_threshold and act_coeff < coeff_upperbound:
+        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
-        if act_loss < act_threshold / 10:
+        if act_loss / hor < act_threshold / 10:
           nu = nu / self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
