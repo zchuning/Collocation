@@ -51,13 +51,15 @@ def define_config():
   config.gd_steps = 2000
   config.gd_lr = 0.05
   config.gn_damping = 1e-3
-  config.lambda_int = 50
-  config.lambda_lr = 1
+  config.lam_int = 50
+  config.lam_lr = 1
   config.lam_step = 10
+  config.nu_lr = 100
+  config.mu_int = -1
   config.dyn_threshold = 1e-1
   config.act_threshold = 1e-1
+  config.rew_threshold = 1e-8
   config.coeff_normalization = 10000
-  config.nu_lr = 100
   config.dyn_loss_scale = 5000
   config.act_loss_scale = 100
   config.rew_loss_scale = 1
@@ -112,7 +114,10 @@ class DreamerColloc(Dreamer):
     # self.logger.log_image("colloc_imgs", img_pred.numpy().reshape(-1, 64, 3))
     # self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
-  def pair_residual_func_body(self, x_a, x_b, goal, lam=np.ones(1, np.float32), nu=np.ones(1, np.float32)):
+  def pair_residual_func_body(self, x_a, x_b, goal,
+      lam=np.ones(1, np.float32),
+      nu=np.ones(1, np.float32),
+      mu=np.ones(1, np.float32)):
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
@@ -129,7 +134,7 @@ class DreamerColloc(Dreamer):
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
     act_c = tf.sqrt(nu) * self._c.act_res_wt
     # rew_c = tf.cast(1.0 + (self._c.rew_res_wt * (1 - self._step / self._c.steps)), act_c.dtype)
-    rew_c = tf.cast(self._c.rew_res_wt, act_c.dtype)
+    rew_c = tf.sqrt(mu)[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
     act_c = act_c * normalize
@@ -144,9 +149,9 @@ class DreamerColloc(Dreamer):
     return objective
 
   @tf.function
-  def opt_step(self, plan, init_feat, goal_feat, lam, nu):
+  def opt_step(self, plan, init_feat, goal_feat, lam, nu, mu):
     init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
-    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu)
+    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu, mu)
     plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=self._c.gn_damping)
     return plan
 
@@ -157,6 +162,7 @@ class DreamerColloc(Dreamer):
     coeff_upperbound = 1e10
     dyn_threshold = self._c.dyn_threshold
     act_threshold = self._c.act_threshold
+    rew_threshold = self._c.rew_threshold
 
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
@@ -170,6 +176,7 @@ class DreamerColloc(Dreamer):
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
     lam = tf.ones(hor)
     nu = tf.ones([hor, self._actdim])
+    mu = tf.ones(hor)
 
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
@@ -177,7 +184,7 @@ class DreamerColloc(Dreamer):
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
-      plan = self.opt_step(plan, init_feat, goal_feat, lam, nu)
+      plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
       act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
@@ -185,7 +192,8 @@ class DreamerColloc(Dreamer):
 
       # Compute and record dynamics loss and reward
       init_loss = tf.linalg.norm(feat_preds[0:1] - init_feat)
-      reward = tf.reduce_sum(self._reward(feat_preds).mode())
+      rew_raw = self._reward(feat_preds).mode()
+      reward = tf.reduce_sum(rew_raw)
       states = self._dynamics.from_feat(feat_preds[None, :-1])
       priors = self._dynamics.img_step(states, act_preds[None, :-1])
       priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
@@ -195,20 +203,24 @@ class DreamerColloc(Dreamer):
       # Record losses and effective coefficients
       dyn_loss = tf.reduce_sum(dyn_viol)
       act_loss = tf.reduce_sum(act_viol)
+      dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
+      act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
-      dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
-      act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
       dyn_coeffs.append(dyn_coeff)
       act_coeffs.append(act_coeff)
 
       # Update lagrange multipliers
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
+      if i % self._c.lam_int == self._c.lam_int - 1:
         lam = tf.where(dyn_viol > dyn_threshold, lam * self._c.lam_step, lam)
         lam = tf.where(dyn_viol < dyn_threshold / 10, lam / self._c.lam_step, lam)
         nu = tf.where(act_viol > act_threshold, nu * self._c.lam_step, nu)
         nu = tf.where(act_viol < act_threshold / 10, nu / self._c.lam_step, nu)
+      if i % self._c.mu_int == self._c.mu_int - 1:
+        if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
+          mu = mu * self._c.lam_step
+
         # if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
         #   lam = lam * self._c.lam_step
         # if dyn_loss / hor < dyn_threshold / 10:
@@ -421,8 +433,8 @@ class DreamerColloc(Dreamer):
         opt.apply_gradients([(grads['feats'], feats)])
         dyn_loss.append(log_prob)
         forces.append(force)
-        if i % self._c.lambda_int == self._c.lambda_int - 1:
-          lambdas += self._c.lambda_lr * log_prob_frame
+        if i % self._c.lam_int == self._c.lam_int - 1:
+          lambdas += self._c.lam_lr * log_prob_frame
           nus += self._c.nu_lr * (actions_viol)
           print(tf.reduce_mean(log_prob_frame, axis=0))
           print(f"Lambdas: {lambdas}\n Nus: {nus}")
@@ -479,8 +491,8 @@ class DreamerColloc(Dreamer):
       dyn_loss_frame.append(log_prob_frame)
       act_loss.append(tf.reduce_sum(actions_viol))
       rewards.append(reward)
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
-        lambdas += self._c.lambda_lr * log_prob_frame
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        lambdas += self._c.lam_lr * log_prob_frame
         nus += self._c.nu_lr * (actions_viol)
         print(tf.reduce_mean(log_prob_frame, axis=0))
         print(f"Lambdas: {lambdas}\n Nus: {nus}")
@@ -538,8 +550,8 @@ class DreamerColloc(Dreamer):
       dyn_loss_frame.append(log_prob_frame)
       act_loss.append(tf.reduce_sum(actions_viol))
       rewards.append(reward)
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
-        lambdas += self._c.lambda_lr * log_prob_frame
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        lambdas += self._c.lam_lr * log_prob_frame
         nus += self._c.nu_lr * (actions_viol)
         print(tf.reduce_mean(log_prob_frame, axis=0))
         print(f"Lambdas: {lambdas}\n Nus: {nus}")
@@ -612,7 +624,7 @@ class DreamerColloc(Dreamer):
         means = tf.reduce_mean(elite_samples, axis=0)
         stds = tf.math.reduce_std(elite_samples, axis=0)
       # Lagrange multiplier
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
+      if i % self._c.lam_int == self._c.lam_int - 1:
         lambdas += tf.reduce_mean(elite_dyn_frame, axis=0)
         print(tf.reduce_mean(dyn_frame, axis=0))
         print(lambdas)
@@ -652,8 +664,8 @@ class DreamerColloc(Dreamer):
       t.assign(tf.clip_by_value(t, min_action, max_action)) # Prevent OOD preds
       act_loss.append(tf.reduce_sum(actions_viol))
       rewards.append(reward)
-      if i % self._c.lambda_int == self._c.lambda_int - 1:
-        lambdas += self._c.lambda_lr * actions_viol
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        lambdas += self._c.lam_lr * actions_viol
         # print(tf.reduce_mean(log_prob_frame, axis=0))
         # print(f"Lambdas: {lambdas}\n Nus: {nus}")
 
@@ -672,7 +684,6 @@ class DreamerColloc(Dreamer):
     else:
       img_pred = None
     return act_pred, img_pred
-
 
   def shooting_cem(self, obs, min_action=-1, max_action=1):
     horizon = self._c.planning_horizon
@@ -881,7 +892,6 @@ def colloc_simulate(agent, config, env, save_images=True):
     agent.logger.log_video("execution/full", frames)
   print("Total reward: " + str(total_reward))
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  import pdb; pdb.set_trace()
 
   return total_reward
 
