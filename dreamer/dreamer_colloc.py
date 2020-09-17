@@ -187,8 +187,8 @@ class DreamerColloc(Dreamer):
       plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
-      act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
-      plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
+      # act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
+      # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
       # Compute and record dynamics loss and reward
       init_loss = tf.linalg.norm(feat_preds[0:1] - init_feat)
@@ -213,10 +213,19 @@ class DreamerColloc(Dreamer):
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
-        lam = tf.where(dyn_viol > dyn_threshold, lam * self._c.lam_step, lam)
-        lam = tf.where(dyn_viol < dyn_threshold / 10, lam / self._c.lam_step, lam)
-        nu = tf.where(act_viol > act_threshold, nu * self._c.lam_step, nu)
-        nu = tf.where(act_viol < act_threshold / 10, nu / self._c.lam_step, nu)
+        # lam = tf.where(dyn_viol > dyn_threshold, lam * self._c.lam_step, lam)
+        # lam = tf.where(dyn_viol < dyn_threshold / 10, lam / self._c.lam_step, lam)
+        # nu = tf.where(act_viol > act_threshold, nu * self._c.lam_step, nu)
+        # nu = tf.where(act_viol < act_threshold / 10, nu / self._c.lam_step, nu)
+        if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
+          lam = lam * self._c.lam_step
+        if dyn_loss / hor < dyn_threshold / 10:
+          lam = lam / self._c.lam_step
+        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
+          nu = nu * self._c.lam_step
+        if act_loss / hor < act_threshold / 10:
+          nu = nu / self._c.lam_step
+
       if i % self._c.mu_int == self._c.mu_int - 1:
         if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
           mu = mu * self._c.lam_step
