@@ -679,7 +679,7 @@ class DreamerColloc(Dreamer):
       plt.show()
     else:
       img_pred = None
-    return act_pred, img_pred
+    return act_pred, img_pred, feat_pred
 
   def shooting_cem(self, obs, step, min_action=-1, max_action=1):
     horizon = self._c.planning_horizon
@@ -743,7 +743,7 @@ class DreamerColloc(Dreamer):
       plt.show()
     else:
       img_pred = None
-    return act_pred, img_pred
+    return act_pred, img_pred, feat_pred
 
   @tf.function()
   def train(self, data, log_images=False):
@@ -864,9 +864,9 @@ def colloc_simulate(agent, config, env, save_images=True):
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting_cem':
-      act_pred, img_pred = agent.shooting_cem(obs, i)
+      act_pred, img_pred, feat_pred = agent.shooting_cem(obs, i)
     elif pt == 'shooting_gd':
-      act_pred, img_pred = agent.shooting_gd(obs, i)
+      act_pred, img_pred, feat_pred = agent.shooting_gd(obs, i)
     elif pt == 'random':
       act_pred = tf.random.uniform((config.mpc_steps,) + actspace.shape, actspace.low[0], actspace.high[0])
       img_pred = None
