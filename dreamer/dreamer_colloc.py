@@ -71,6 +71,7 @@ def define_config():
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
   config.eval_tasks = 1
   config.goal_based = False
+  config.hyst_ratio = 0.1
   return config
 
 
@@ -213,31 +214,17 @@ class DreamerColloc(Dreamer):
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
-        # lam = tf.where(dyn_viol > dyn_threshold, lam * self._c.lam_step, lam)
-        # lam = tf.where(dyn_viol < dyn_threshold / 10, lam / self._c.lam_step, lam)
-        # nu = tf.where(act_viol > act_threshold, nu * self._c.lam_step, nu)
-        # nu = tf.where(act_viol < act_threshold / 10, nu / self._c.lam_step, nu)
         if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
           lam = lam * self._c.lam_step
-        if dyn_loss / hor < dyn_threshold / 10:
+        if dyn_loss / hor < dyn_threshold * self._c.hyst_ratio:
           lam = lam / self._c.lam_step
         if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
           nu = nu * self._c.lam_step
-        if act_loss / hor < act_threshold / 10:
+        if act_loss / hor < act_threshold * self._c.hyst_ratio:
           nu = nu / self._c.lam_step
-
       if i % self._c.mu_int == self._c.mu_int - 1:
         if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
           mu = mu * self._c.lam_step
-
-        # if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
-        #   lam = lam * self._c.lam_step
-        # if dyn_loss / hor < dyn_threshold / 10:
-        #   lam = lam / self._c.lam_step
-        # if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
-        #   nu = nu * self._c.lam_step
-        # if act_loss / hor < act_threshold / 10:
-        #   nu = nu / self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
@@ -647,7 +634,7 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
 
-  def shooting_gd(self, obs, min_action=-1, max_action=1):
+  def shooting_gd(self, obs, step, min_action=-1, max_action=1):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
 
@@ -672,17 +659,17 @@ class DreamerColloc(Dreamer):
       opt.apply_gradients([(grad, t)])
       t.assign(tf.clip_by_value(t, min_action, max_action)) # Prevent OOD preds
       act_loss.append(tf.reduce_sum(actions_viol))
-      rewards.append(reward)
+      rewards.append(tf.reduce_sum(reward))
       if i % self._c.lam_int == self._c.lam_int - 1:
         lambdas += self._c.lam_lr * actions_viol
-        # print(tf.reduce_mean(log_prob_frame, axis=0))
-        # print(f"Lambdas: {lambdas}\n Nus: {nus}")
 
     act_pred = t[:min(horizon, mpc_steps)]
     feat_pred = feats
     img_pred = self._decode(feat_pred).mode()
     print(f"Final average action violation: {act_loss[-1] / horizon}")
     print(f"Final average reward: {rewards[-1] / horizon}")
+    curves = dict(rewards=rewards, action_violation=act_loss)
+    self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
       img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
@@ -694,7 +681,7 @@ class DreamerColloc(Dreamer):
       img_pred = None
     return act_pred, img_pred
 
-  def shooting_cem(self, obs, min_action=-1, max_action=1):
+  def shooting_cem(self, obs, step, min_action=-1, max_action=1):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     elite_size = int(self._c.cem_batch_size * self._c.cem_elite_ratio)
@@ -707,16 +694,13 @@ class DreamerColloc(Dreamer):
     def eval_fitness(t):
       init_feats = tf.tile(init_feat, [batch, 1])
       actions = tf.reshape(t, [batch, horizon, -1])
-      # init_states = {'stoch': init_feats[:, :self._c.stoch_size],
-      #                'deter': init_feats[:, self._c.stoch_size:]}
-      # priors = self._dynamics.imagine(actions, init_states)
-      # feats = tf.squeeze(tf.concat([priors['stoch'], priors['deter']], axis=-1))
       feats = self._dynamics.imagine_feat(actions, init_feats, deterministic=True)
       rewards = tf.reduce_sum(self._reward(feats).mode(), axis=1)
       return rewards, feats
 
     # CEM loop:
     rewards = []
+    act_losses = []
     means = tf.zeros(var_len, dtype=self._float)
     stds = tf.ones(var_len, dtype=self._float)
     for i in range(self._c.cem_steps):
@@ -737,11 +721,19 @@ class DreamerColloc(Dreamer):
       else:
         means, vars = tf.nn.moments(elite_samples, 0)
         stds = tf.sqrt(vars + 1e-6)
+      # Log action violations
+      means_pred = tf.reshape(means, [horizon, -1])
+      act_pred = means_pred[:min(horizon, mpc_steps)]
+      act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_pred) - 1, 0, np.inf))
+      act_losses.append(act_loss)
 
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
     feat_pred = feats[elite_inds[0]]
     print("Final average reward: {0}".format(rewards[-1] / horizon))
+    # Log curves
+    curves = dict(rewards=rewards, action_violation=act_losses)
+    self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
       img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
@@ -852,6 +844,8 @@ def colloc_simulate(agent, config, env, save_images=True):
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward = 0
+  if config.sparse_reward:
+    total_sparse_reward = 0
   start = time.time()
   for i in range(0, num_iter, config.mpc_steps):
     print("Planning step {0} of {1}".format(i + 1, num_iter))
@@ -870,9 +864,9 @@ def colloc_simulate(agent, config, env, save_images=True):
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal(obs, goal_obs, 'gd')
     elif pt == 'shooting_cem':
-      act_pred, img_pred = agent.shooting_cem(obs)
+      act_pred, img_pred = agent.shooting_cem(obs, i)
     elif pt == 'shooting_gd':
-      act_pred, img_pred = agent.shooting_gd(obs)
+      act_pred, img_pred = agent.shooting_gd(obs, i)
     elif pt == 'random':
       act_pred = tf.random.uniform((config.mpc_steps,) + actspace.shape, actspace.low[0], actspace.high[0])
       img_pred = None
@@ -881,8 +875,10 @@ def colloc_simulate(agent, config, env, save_images=True):
     # Simluate in environment
     act_pred_np = act_pred.numpy()
     for j in range(len(act_pred_np)):
-      obs, reward, done, _ = env.step(act_pred_np[j])
+      obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
+      if config.sparse_reward:
+        total_sparse_reward += info['success']
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # Logging
@@ -901,7 +897,9 @@ def colloc_simulate(agent, config, env, save_images=True):
     agent.logger.log_video("execution/full", frames)
   print("Total reward: " + str(total_reward))
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-
+  if config.sparse_reward:
+    print("Total sparse reward: " + str(total_sparse_reward))
+    agent.logger.log_graph('true_sparse_reward', {'rewards/true': [total_sparse_reward]})
   return total_reward
 
 
@@ -927,10 +925,14 @@ def main(config):
   agent.load(config.logdir / 'variables.pkl')
 
   reward_meter = AverageMeter()
+  tot_rews = []
   for i in range(config.eval_tasks):
-    save_images = (i % 10 == 0) and config.visualize
-    reward_meter.update(colloc_simulate(agent, config, env, save_images))
+    save_images = (i % 1 == 0) and config.visualize
+    tot_rew = colloc_simulate(agent, config, env, save_images)
+    reward_meter.update(tot_rew)
+    tot_rews.append(tot_rew)
   print(f'Average reward across {config.eval_tasks} tasks: {reward_meter.avg}')
+  agent.logger.log_graph('total_reward', {f'total_reward': tot_rews})
   import pdb; pdb.set_trace()
 
 
