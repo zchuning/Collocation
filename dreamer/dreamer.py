@@ -47,6 +47,7 @@ def define_config():
   config.eval_noise = 0.0
   config.clip_rewards = 'none'
   config.sparse_reward = False
+  config.sparse_training = False
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -61,6 +62,7 @@ def define_config():
   config.weight_decay = 0.0
   config.weight_decay_pattern = r'.*'
   config.inverse_model = False
+  config.save_every = 100000
   # Training.
   config.batch_size = 50
   config.batch_length = 50
@@ -172,7 +174,7 @@ class Dreamer(tools.Module):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      if self._c.sparse_reward:
+      if self._c.sparse_training:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
       else:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
@@ -343,6 +345,9 @@ class Dreamer(tools.Module):
     print(f'[{step}]: {self._c.logdir} , ', ' / '.join(f'{k} {v:.1f}' for k, v in metrics))
     self._writer.flush()
 
+  def get_step(self):
+    return int(self._step.numpy())
+
 
 def preprocess(obs, config):
   dtype = prec.global_policy().compute_dtype
@@ -482,6 +487,8 @@ def main(config):
     state = tools.simulate(agent, train_envs, steps, state=state)
     step = count_steps(datadir, config)
     agent.save(config.logdir / 'variables.pkl')
+    if config.save_every:
+      agent.save(config.logdir / f'variables_{agent.get_step() // config.save_every}.pkl')
   for env in train_envs + test_envs:
     env.close()
 
