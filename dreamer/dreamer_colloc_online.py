@@ -169,7 +169,7 @@ def main(config):
       str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()
   train_envs = [wrappers.Async(lambda: dreamer.make_env(
-      config, writer, 'train', datadir, store=True), config.parallel)
+      config, writer, 'train', datadir, store=config.train_store), config.parallel)
       for _ in range(config.envs)]
   test_envs = [wrappers.Async(lambda: dreamer.make_env(
       config, writer, 'test', datadir, store=False), config.parallel)
