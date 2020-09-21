@@ -55,7 +55,10 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if self._c.sparse_training:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
+      else:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
