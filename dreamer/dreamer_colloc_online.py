@@ -202,6 +202,8 @@ def main(config):
     state = tools.simulate(agent, train_envs, steps, state=state)
     step = dreamer.count_steps(datadir, config)
     agent.save(config.logdir / 'variables.pkl')
+    if config.save_every:
+      agent.save(config.logdir / f'variables_{agent.get_step() // config.save_every}.pkl')
   for env in train_envs + test_envs:
     env.close()
 
