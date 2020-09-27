@@ -180,7 +180,8 @@ class DreamerColloc(Dreamer):
     mu = tf.ones(hor)
 
     # Run second-order solver
-    dyn_losses, act_losses, rewards = [], [], []
+    dyn_losses, act_losses, rewards, rew_res = [], [], [], []
+    model_rewards = []
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
@@ -209,8 +210,13 @@ class DreamerColloc(Dreamer):
       dyn_losses.append(dyn_loss)
       act_losses.append(act_loss)
       rewards.append(reward)
+      rew_res.append(tf.reduce_sum(tf.square((self._c.rew_res_wt / (rew_raw + 10000)))))
       dyn_coeffs.append(dyn_coeff)
       act_coeffs.append(act_coeff)
+
+      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      model_rew = self._reward(model_feats).mode()
+      model_rewards.append(tf.reduce_sum(model_rew))
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
@@ -231,10 +237,11 @@ class DreamerColloc(Dreamer):
     if verbose:
       print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
       print(f"Final average action violation: {act_losses[-1] / hor}")
-      print(f"Final average reward: {rewards[-1] / hor}")
-      print(f"Final average initial state violation: {init_loss}")
+      print(f"Final total reward: {rewards[-1]}")
+      print(f"Final initial state violation: {init_loss}")
     curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses,
-                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs)
+                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs, model_rewards=model_rewards,
+                  reward_residual=rew_res)
     if save_images:
       img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
@@ -887,6 +894,20 @@ def colloc_simulate(agent, config, env, save_images=True):
       img_preds.append(img_pred.numpy())
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
+
+    rewards = []
+    for _ in range(50):
+      feats = agent._dynamics.imagine_feat(act_pred[None, :], feat_pred[0:1], deterministic=False)
+      reward_i = tf.reduce_sum(agent._reward(feats).mode(), axis=1)
+      rewards.append(reward_i)
+    det_feats = agent._dynamics.imagine_feat(act_pred[None, :], feat_pred[0:1], deterministic=True)
+    # import pdb; pdb.set_trace()
+    std, exp_rew = tf.square(tf.math.reduce_std(rewards)).numpy(), tf.math.reduce_mean(rewards).numpy()
+    det_rew = tf.reduce_sum(agent._reward(det_feats).mode()).numpy()
+    plan_rew = tf.reduce_sum(agent._reward(feat_pred).mode()).numpy()
+    print(f'distribution {exp_rew} +- {std}, deterministic reward {det_rew}, plan reward {plan_rew}')
+    agent.data_list.append([exp_rew, std, det_rew, plan_rew, rewards])
+    
   end = time.time()
   goal_dist = info['goalDist'] if 'goalDist' in info else info['reachDist']
   success = info['success'] # float(goal_dist < 0.15) # info['success']
@@ -930,6 +951,7 @@ def main(config):
   rew_meter, sp_rew_meter = AverageMeter(), AverageMeter()
   tot_rews, tot_sp_rews, tot_succ = [], [], 0
   goal_dists = []
+  agent.data_list = []
   for i in range(config.eval_tasks):
     save_images = (i % 1 == 0) and config.visualize
     tot_rew, tot_sp_rew, succ, goal_dist = colloc_simulate(agent, config, env, save_images)
@@ -952,8 +974,20 @@ def main(config):
   print(f'Success rate: {tot_succ / config.eval_tasks}')
   agent.logger.log_graph('success_rate', {'total_reward/success': [tot_succ / config.eval_tasks]})
   agent.logger.log_hist('total_reward/goal_dist', goal_dists)
-  import pdb; pdb.set_trace()
 
+  exp_rew, std, det_rew, plan_rew, rewards = zip(*agent.data_list)
+  std = np.array(std)
+  det_rew = np.array(det_rew)
+  exp_rew = np.array(exp_rew)
+  plan_rew = np.array(plan_rew)
+  print(f'positive-reward plans: {(det_rew > 0).sum()/det_rew.shape[0]*100}%' )
+  print(f'planned reward {plan_rew.mean()}, model reward {det_rew.mean()}, expected reward {exp_rew.mean()}')
+  import pdb; pdb.set_trace()
+  np.set_printoptions(suppress=True, precision=1)
+  inds = (det_rew > 0).nonzero()
+  
+  results = np.array([exp_rew, std, det_rew])[:, inds].T[:, 0]
+  for row in results:    print(f'{row[0]:.1f} +- {row[1]:.1f}, {row[2]:.1f}')
 
 if __name__ == '__main__':
   try:
