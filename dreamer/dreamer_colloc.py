@@ -134,7 +134,6 @@ class DreamerColloc(Dreamer):
     # TODO redefine weights to not be square roots
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
     act_c = tf.sqrt(nu) * self._c.act_res_wt
-    # rew_c = tf.cast(1.0 + (self._c.rew_res_wt * (1 - self._step / self._c.steps)), act_c.dtype)
     rew_c = tf.sqrt(mu)[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
@@ -143,9 +142,11 @@ class DreamerColloc(Dreamer):
 
     dyn_res = dyn_c * dyn_res
     act_res = act_c * act_res
-    rew_res = rew_c * (1.0 / (rew + 10000))[:, None]
-    # rew_res = self._c.rew_res_wt * (x_b[:, :-self._actdim] - goal) # goal-based reward
-    # rew_res = self._c.rew_res_wt * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
+    # rew_res = rew_c * (1.0 / (rew + 10000))[:, None]
+    # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
+    rew_res = rew_c * (-tf.math.log_sigmoid(rew))
+    # rew_res = rew_c * (x_b[:, :-self._actdim] - goal) # goal-based reward
+    # rew_res = rew_c * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
 
@@ -214,14 +215,23 @@ class DreamerColloc(Dreamer):
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
-        if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
-          lam = lam * self._c.lam_step
-        if dyn_loss / hor < dyn_threshold * self._c.hyst_ratio:
-          lam = lam / self._c.lam_step
-        if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
-          nu = nu * self._c.lam_step
-        if act_loss / hor < act_threshold * self._c.hyst_ratio:
-          nu = nu / self._c.lam_step
+        # if dyn_loss / hor > dyn_threshold and dyn_coeff < coeff_upperbound:
+        #   lam = lam * self._c.lam_step
+        # if dyn_loss / hor < dyn_threshold * self._c.hyst_ratio:
+        #   lam = lam / self._c.lam_step
+        # if act_loss / hor > act_threshold and act_coeff < coeff_upperbound:
+        #   nu = nu * self._c.lam_step
+        # if act_loss / hor < act_threshold * self._c.hyst_ratio:
+        #   nu = nu / self._c.lam_step
+
+        # lam_step = 1.0 + 0.1 * tf.math.log((dyn_viol + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
+        # nu_step  = 1.0 + 0.1 * tf.math.log((act_viol + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
+
+        lam_step = 1.0 + 0.1 * tf.math.log(((dyn_loss / hor) + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
+        nu_step  = 1.0 + 0.1 * tf.math.log(((act_loss / hor) + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
+        lam = lam * lam_step
+        nu = nu * nu_step
+
       if i % self._c.mu_int == self._c.mu_int - 1:
         if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
           mu = mu * self._c.lam_step
