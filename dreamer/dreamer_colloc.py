@@ -988,6 +988,7 @@ def main(config):
   agent.logger.log_graph('success_rate', {'total_reward/success': [tot_succ / config.eval_tasks]})
   agent.logger.log_hist('total_reward/goal_dist', goal_dists)
 
+  np.save(config.logdir_colloc / 'data_list.npy', agent.data_list)
   exp_rew, std, det_rew, plan_rew, rewards = zip(*agent.data_list)
   std = np.array(std)
   det_rew = np.array(det_rew)
@@ -995,6 +996,10 @@ def main(config):
   plan_rew = np.array(plan_rew)
   print(f'positive-reward plans: {(det_rew > 0).sum()/det_rew.shape[0]*100}%' )
   print(f'planned reward {plan_rew.mean()}, model reward {det_rew.mean()}, expected reward {exp_rew.mean()}')
+  print(f'Successful plans that exploit the model (assuming binary reward): '
+        f'{((det_rew > 7) * (exp_rew < 5)).mean() * 100}%')
+  # print(f'Successful plans that exploit the model (assuming binary reward): '
+  #       f'{((det_rew > 2) * (exp_rew < 0)).mean() * 100}%')
   import pdb; pdb.set_trace()
   np.set_printoptions(suppress=True, precision=1)
   inds = (det_rew > 0).nonzero()
