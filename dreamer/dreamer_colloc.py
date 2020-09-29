@@ -128,6 +128,19 @@ class DreamerColloc(Dreamer):
     # epsilon = 1e-3
     # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
+    
+    hinge = False
+    hard_hinge = False
+    # hinge = False
+    if hinge:
+      epsilon = (self._c.dyn_threshold / (self._c.stoch_size + self._c.deter_size)) ** (1/2)
+      tf.print(tf.reduce_mean(tf.cast((tf.math.abs(dyn_res) - epsilon) < 0, tf.float32)))
+      # dyn_res = tf.math.abs(dyn_res)
+      if hard_hinge:
+        dyn_res = tf.clip_by_value(tf.math.abs(dyn_res) - epsilon, 0, np.inf)
+      else:
+        dyn_res = tools.softclip(tf.math.abs(dyn_res), epsilon)
+      
     act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # Compute coefficients

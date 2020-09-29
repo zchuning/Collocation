@@ -437,3 +437,10 @@ class Once:
       self._once = False
       return True
     return False
+
+
+def softclip(tensor, min):
+  """ Clips the tensor values at the minimum value min in a softway. Taken from Handful of Trials """
+  result_tensor = min + tf.nn.softplus(tensor - min)
+  
+  return result_tensor
