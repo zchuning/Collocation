@@ -181,6 +181,7 @@ class DreamerColloc(Dreamer):
 
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
+    model_rewards = []
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
@@ -212,6 +213,10 @@ class DreamerColloc(Dreamer):
       rewards.append(reward)
       dyn_coeffs.append(dyn_coeff)
       act_coeffs.append(act_coeff)
+      
+      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      model_rew = self._reward(model_feats).mode()
+      model_rewards.append(tf.reduce_sum(model_rew))
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
@@ -246,7 +251,7 @@ class DreamerColloc(Dreamer):
       print(f"Final total reward: {rewards[-1]}")
       print(f"Final average initial state violation: {init_loss}")
     curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses,
-                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs)
+                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs, model_rewards=model_rewards)
     if save_images:
       img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
