@@ -51,7 +51,7 @@ def define_config():
   config.gd_steps = 2000
   config.gd_lr = 0.05
   config.gn_damping = 1e-3
-  config.lam_int = 50
+  config.lam_int = 1
   config.lam_lr = 1
   config.lam_step = 10
   config.nu_lr = 100
@@ -116,25 +116,28 @@ class DreamerColloc(Dreamer):
     # self.logger.log_image("model_imgs", model_imgs.reshape(-1, 64, 3))
 
   def pair_residual_func_body(self, x_a, x_b, goal,
-      lam=np.ones(1, np.float32),
-      nu=np.ones(1, np.float32),
-      mu=np.ones(1, np.float32)):
+      lam=np.ones(1, np.float32), nu=np.ones(1, np.float32), mu=np.ones(1, np.float32)):
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
     prior_a = self._dynamics.img_step(states_a, actions_a)
     x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
-    rew = self._reward(x_b[:, :-self._actdim]).mode()
-    # epsilon = 1e-3
-    # dyn_res = self._c.dyn_res_wt * tf.clip_by_value(tf.math.abs(x_b[:, :-self._actdim] - x_b_pred) - epsilon, 0, np.inf)
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
     act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
-    # act_res = self._c.act_res_wt * tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    # act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
+    rew = self._reward(x_b[:, :-self._actdim]).mode()
+    rew_res = tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) tf.math.softplus(rew) # Softplus
+    # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
+    # rew_res = rew_c * (1.0 / (rew + 10000))[:, None] # Inverse
+    # rew_res = rew_c * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
+    # rew_res = rew_c * (x_b[:, :-self._actdim] - goal) # goal-based reward
+
     # Compute coefficients
     # TODO redefine weights to not be square roots
     dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
-    act_c = tf.sqrt(nu) * self._c.act_res_wt
+    act_c = tf.sqrt(nu)[:, None] * self._c.act_res_wt
     rew_c = tf.sqrt(mu)[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
+
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     dyn_c = dyn_c * normalize
     act_c = act_c * normalize
@@ -142,11 +145,7 @@ class DreamerColloc(Dreamer):
 
     dyn_res = dyn_c * dyn_res
     act_res = act_c * act_res
-    # rew_res = rew_c * (1.0 / (rew + 10000))[:, None]
-    # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
-    rew_res = rew_c * (-tf.math.log_sigmoid(rew))
-    # rew_res = rew_c * (x_b[:, :-self._actdim] - goal) # goal-based reward
-    # rew_res = rew_c * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
+    rew_res = rew_c * rew_res
     objective = tf.concat([dyn_res, act_res, rew_res], 1)
     return objective
 
@@ -177,7 +176,7 @@ class DreamerColloc(Dreamer):
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
     lam = tf.ones(hor)
-    nu = tf.ones([hor, self._actdim])
+    nu = tf.ones(hor)
     mu = tf.ones(hor)
 
     # Run second-order solver
@@ -200,7 +199,8 @@ class DreamerColloc(Dreamer):
       priors = self._dynamics.img_step(states, act_preds[None, :-1])
       priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
       dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]), 1)
-      act_viol = tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf)
+      act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf), 1)
+      # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
 
       # Record losses and effective coefficients
       dyn_loss = tf.reduce_sum(dyn_viol)
@@ -224,24 +224,26 @@ class DreamerColloc(Dreamer):
         # if act_loss / hor < act_threshold * self._c.hyst_ratio:
         #   nu = nu / self._c.lam_step
 
-        # lam_step = 1.0 + 0.1 * tf.math.log((dyn_viol + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
-        # nu_step  = 1.0 + 0.1 * tf.math.log((act_viol + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
-
-        lam_step = 1.0 + 0.1 * tf.math.log(((dyn_loss / hor) + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
-        nu_step  = 1.0 + 0.1 * tf.math.log(((act_loss / hor) + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
+        lam_step = 1.0 + 0.1 * tf.math.log((dyn_viol + 0.1 * dyn_threshold) / dyn_threshold) / tf.math.log(10.0)
+        nu_step  = 1.0 + 0.1 * tf.math.log((act_viol + 0.1 * act_threshold) / act_threshold) / tf.math.log(10.0)
         lam = lam * lam_step
         nu = nu * nu_step
 
-      if i % self._c.mu_int == self._c.mu_int - 1:
-        if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
-          mu = mu * self._c.lam_step
+        # lam_step = 1.0 + 0.1 * tf.math.log(((dyn_loss / hor) + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
+        # nu_step  = 1.0 + 0.1 * tf.math.log(((act_loss / hor) + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
+
+      # if i % self._c.mu_int == self._c.mu_int - 1:
+        # mu_step = 1.0 + 0.1 * tf.math.log((tf.math.softplus(rew_raw[1:]) + rew_threshold) / (2.0 * rew_threshold)) / tf.math.log(10.0)
+        # mu = mu * mu_step
+        # if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
+        #   mu = mu * self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:
       print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
       print(f"Final average action violation: {act_losses[-1] / hor}")
-      print(f"Final average reward: {rewards[-1] / hor}")
+      print(f"Final total reward: {rewards[-1]}")
       print(f"Final average initial state violation: {init_loss}")
     curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses,
                   dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs)
