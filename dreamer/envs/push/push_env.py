@@ -8,8 +8,10 @@ import tensorflow as tf
 from gym import spaces
 
 FIXED_START = False ##True ##########
+# FIXED_START = True ##True ##########
 FIXED_GOAL = True ##True ##########
 FIXED_OBJECT = False ##True ##########
+# FIXED_OBJECT = True ##True ##########
 
 INCLUDE_VEL = True
 
@@ -77,11 +79,15 @@ class Push(mujoco_env.MujocoEnv, utils.EzPickle):
         reward, done = self.get_reward(ob, a)
 
         score = self.get_score(ob)
+        goal_dist = self.get_goal_dist(ob)
+        success = float(goal_dist < 0.1)
 
         # finalize step
         env_info = {'ob': ob,
                     'rewards': self.reward_dict,
-                    'score': score}
+                    'score': score,
+                    'success': success,
+                    'goalDist': goal_dist}
 
         return ob, reward, done, env_info
 
@@ -96,6 +102,12 @@ class Push(mujoco_env.MujocoEnv, utils.EzPickle):
         score = -1*np.abs(pos-target_pos)
         return score
 
+    def get_goal_dist(self, obs):
+
+        pos = obs[2:4] # position of object
+        target_pos = obs[-self.goal_dim:]
+        goal_dist = np.linalg.norm(pos-target_pos)
+        return goal_dist
 
     def get_reward(self, observations, actions=None):
 
@@ -160,10 +172,14 @@ class Push(mujoco_env.MujocoEnv, utils.EzPickle):
             self.reset_pose = self.init_qpos.copy()
 
             ####### SET IT MYSELF
-            self.reset_pose[0] = -0.2 ## -0.2 #actuated 
-            self.reset_pose[1] = -0.2 ## 0.0
-            self.reset_pose[2] = 0 #object
-            self.reset_pose[3] = 0
+            # self.reset_pose[0] = -0.2 ## -0.2 #actuated
+            # self.reset_pose[1] = -0.2 ## 0.0
+            # self.reset_pose[2] = 0 #object
+            # self.reset_pose[3] = 0
+            self.reset_pose[0] = 0
+            self.reset_pose[1] = 0
+            self.reset_pose[2] = 0.8 #object
+            self.reset_pose[3] = 0.8
 
         else:
 
@@ -174,14 +190,14 @@ class Push(mujoco_env.MujocoEnv, utils.EzPickle):
                 sign = -1
             object_x = np.random.uniform(-0.4, 0.4)
             object_y = np.random.uniform(-0.4, 0.4)
-            
+
             self.reset_pose = np.array([sign*pusher_x, sign*pusher_y, object_x, object_y])
 
             if FIXED_OBJECT:
                 self.reset_pose[2] = 0
                 self.reset_pose[3] = 0
 
-        
+
         ########## reset vel (0)
         self.reset_vel = 0.0*self.init_qvel.copy()
 
