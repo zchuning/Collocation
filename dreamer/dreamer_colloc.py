@@ -126,7 +126,7 @@ class DreamerColloc(Dreamer):
     act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     rew = self._reward(x_b[:, :-self._actdim]).mode()
-    rew_res = tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) tf.math.softplus(rew) # Softplus
+    rew_res = tf.math.softplus(-rew) # 1.0 - tf.math.sigmoid(rew) # tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) # Softplus
     # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
     # rew_res = rew_c * (1.0 / (rew + 10000))[:, None] # Inverse
     # rew_res = rew_c * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
@@ -213,7 +213,7 @@ class DreamerColloc(Dreamer):
       rewards.append(reward)
       dyn_coeffs.append(dyn_coeff)
       act_coeffs.append(act_coeff)
-      
+
       model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
       model_rew = self._reward(model_feats).mode()
       model_rewards.append(tf.reduce_sum(model_rew))
@@ -895,7 +895,7 @@ def colloc_simulate(agent, config, env, save_images=True):
       obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
       if config.sparse_reward:
-          total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15) # info['success']
+          total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # Logging
@@ -905,8 +905,8 @@ def colloc_simulate(agent, config, env, save_images=True):
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
-  goal_dist = info['goalDist'] if 'goalDist' in info else info['reachDist']
-  success = info['success'] # float(goal_dist < 0.15) # info['success']
+  goal_dist = info['goalDist'] if 'goalDist' in info else 0 # info['reachDist']
+  success = info['success'] if 'success' in info else 0 # float(goal_dist < 0.15)
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
