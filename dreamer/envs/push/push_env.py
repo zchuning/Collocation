@@ -176,10 +176,15 @@ class Push(mujoco_env.MujocoEnv, utils.EzPickle):
             # self.reset_pose[1] = -0.2 ## 0.0
             # self.reset_pose[2] = 0 #object
             # self.reset_pose[3] = 0
-            self.reset_pose[0] = 0
-            self.reset_pose[1] = 0
-            self.reset_pose[2] = 0.8 #object
-            self.reset_pose[3] = 0.8
+            # self.reset_pose[0] = -0.8
+            # self.reset_pose[1] = -0.8
+            # self.reset_pose[2] = 0.1 #object
+            # self.reset_pose[3] = 0.5
+            self.reset_pose[0] = 0.8
+            self.reset_pose[1] = 0.8
+            self.reset_pose[2] = 0 #object
+            self.reset_pose[3] = 0
+
 
         else:
 

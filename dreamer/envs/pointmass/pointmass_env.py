@@ -7,7 +7,7 @@ from gym import spaces
 from mujoco_py import MjViewer
 
 MAKE_OBSTACLES = True
-FIXED_START = False
+FIXED_START = False # True # False
 FIXED_GOAL = True
 
 INCLUDE_VEL = False ######True #### False
@@ -88,11 +88,15 @@ class Pointmass(mujoco_env.MujocoEnv, utils.EzPickle):
         reward, done = self.get_reward(ob, a)
 
         score = self.get_score(ob)
+        goal_dist = self.get_goal_dist(ob)
+        success = float(goal_dist < 0.3)
 
         # finalize step
         env_info = {'ob': ob,
                     'rewards': self.reward_dict,
-                    'score': score}
+                    'score': score,
+                    'success': success,
+                    'goalDist': goal_dist}
 
         return ob, reward, done, env_info
 
@@ -106,6 +110,11 @@ class Pointmass(mujoco_env.MujocoEnv, utils.EzPickle):
         score = -1*np.abs(pos-target_pos)
         return score
 
+    def get_goal_dist(self, obs):
+        pos = obs[:2]
+        target_pos = obs[-self.goal_dim:]
+        goal_dist = np.linalg.norm(pos-target_pos)
+        return goal_dist
 
     def get_reward(self, observations, actions=None):
 
@@ -164,15 +173,23 @@ class Pointmass(mujoco_env.MujocoEnv, utils.EzPickle):
 
         if FIXED_START:
             self.reset_pose = self.init_qpos.copy()
+
+            self.reset_pose[0] = -0.4
+            self.reset_pose[1] = 0
+            # self.reset_pose[2] = 0 #object
+            # self.reset_pose[3] = 0
         else:
             lows = self.model.jnt_range[:,0].copy()
             highs = self.model.jnt_range[:,1].copy()
             self.reset_pose = np.random.uniform(lows, highs, (self.model.jnt_range.shape[0],))
+            self.reset_pose[0] = np.random.uniform(-0.6, -0.4) # hard random task
+            self.reset_pose[1] = np.random.uniform(-0.1, 0.1) # harder random task
 
             # make sure starting point is not inside wall
             while self.is_in_wall(self.reset_pose):
                 self.reset_pose = np.random.uniform(lows, highs, (self.model.jnt_range.shape[0],))
-        
+                self.reset_pose[0] = np.random.uniform(-0.6, -0.4) # hard random task
+                self.reset_pose[1] = np.random.uniform(-0.1, 0.1) # harder random task
         ########## reset vel (0)
 
         self.reset_vel = 0.0*self.init_qvel.copy()
@@ -211,7 +228,7 @@ class Pointmass(mujoco_env.MujocoEnv, utils.EzPickle):
             self.reset_goal = np.array([goal_x, goal_y, 0])
             ################
 
-            
+
 
         return self.do_reset(self.reset_pose, self.reset_vel, self.reset_goal)
 
@@ -227,14 +244,14 @@ class Pointmass(mujoco_env.MujocoEnv, utils.EzPickle):
         #return
         return self._get_obs()
 
-        
+
     def is_in_wall(self, position):
 
         if position[0]>self.wall_x_min:
             if position[0]<self.wall_x_max:
                 if position[1]>self.wall_y_min:
                     if position[1]<self.wall_y_max:
-                        return True 
+                        return True
 
         return False
 
