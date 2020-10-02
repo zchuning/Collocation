@@ -129,11 +129,17 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     # Note: it is possible to get rid of tf.function by removing lambda-functions in collocation_so. This is possible
     # by removing the init_residual_function and enforcing it as a hard constraint.
     # TODO check whether anonymous functions work correctly in graph mode! They seem to, but it's not clear
-    act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
+    if self._c.planning_task == "colloc_second_order":
+      act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
+      for k, v in info.items():
+        self._metrics[f'opt_{k}'].update_state(v)
+    elif self._c.planning_task == "shooting_cem":
+      act_pred, img_pred, feat_pred = self.shooting_cem(None, None, init_feat=feat, verbose=False)
+    elif self._c.planning_task == "shooting_gd":
+      act_pred, img_pred, feat_pred = self.shooting_gd(None, None, init_feat=feat, verbose=False)
+
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
-    for k, v in info.items():
-      self._metrics[f'opt_{k}'].update_state(v)
     return act_pred
 
   def policy(self, obs, state, training):

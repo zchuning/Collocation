@@ -651,12 +651,13 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(rewards, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
 
-  def shooting_gd(self, obs, step, min_action=-1, max_action=1):
+  def shooting_gd(self, obs, step, min_action=-1, max_action=1, init_feat=None, verbose=True):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
 
     # Initialize decision variables
-    init_feat, _ = self.get_init_feat(obs)
+    if init_feat is None:
+      init_feat, _ = self.get_init_feat(obs)
     t = tf.Variable(tf.random.normal((horizon, self._actdim), dtype=self._float))
     lambdas = tf.ones([horizon, self._actdim])
     act_loss, rewards = [], []
@@ -683,10 +684,11 @@ class DreamerColloc(Dreamer):
     act_pred = t[:min(horizon, mpc_steps)]
     feat_pred = feats
     img_pred = self._decode(feat_pred).mode()
-    print(f"Final average action violation: {act_loss[-1] / horizon}")
-    print(f"Final average reward: {rewards[-1] / horizon}")
-    curves = dict(rewards=rewards, action_violation=act_loss)
-    self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
+    if verbose:
+      print(f"Final average action violation: {act_loss[-1] / horizon}")
+      print(f"Final average reward: {rewards[-1] / horizon}")
+      curves = dict(rewards=rewards, action_violation=act_loss)
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
       img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
@@ -698,15 +700,16 @@ class DreamerColloc(Dreamer):
       img_pred = None
     return act_pred, img_pred, feat_pred
 
-  def shooting_cem(self, obs, step, min_action=-1, max_action=1):
+  def shooting_cem(self, obs, step, min_action=-1, max_action=1, init_feat=None, verbose=True):
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     elite_size = int(self._c.cem_batch_size * self._c.cem_elite_ratio)
     var_len = self._actdim * horizon
     batch = self._c.cem_batch_size
 
-    # Get initial states
-    init_feat, _ = self.get_init_feat(obs)
+    # Get initial statesi
+    if init_feat is None:
+      init_feat, _ = self.get_init_feat(obs)
 
     def eval_fitness(t):
       init_feats = tf.tile(init_feat, [batch, 1])
@@ -747,10 +750,11 @@ class DreamerColloc(Dreamer):
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
     feat_pred = feats[elite_inds[0]]
-    print("Final average reward: {0}".format(rewards[-1] / horizon))
-    # Log curves
-    curves = dict(rewards=rewards, action_violation=act_losses)
-    self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
+    if verbose:
+      print("Final average reward: {0}".format(rewards[-1] / horizon))
+      # Log curves
+      curves = dict(rewards=rewards, action_violation=act_losses)
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
       img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
@@ -860,7 +864,7 @@ def colloc_simulate(agent, config, env, save_images=True):
 
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
-  total_reward, total_sparse_reward = 0, None
+  total_reward, total_sparse_reward = 0, 0
   if config.sparse_reward:
     total_sparse_reward = 0
   start = time.time()
@@ -894,8 +898,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     for j in range(len(act_pred_np)):
       obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
-      if config.sparse_reward:
-          total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
+      total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # Logging
@@ -905,8 +908,8 @@ def colloc_simulate(agent, config, env, save_images=True):
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
-  goal_dist = info['goalDist'] if 'goalDist' in info else 0 # info['reachDist']
-  success = info['success'] if 'success' in info else 0 # float(goal_dist < 0.15)
+  goal_dist = info['goalDist'] if 'goalDist' in info else info['reachDist']
+  success = float(total_sparse_reward > 0) # info['success']
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
@@ -958,6 +961,7 @@ def main(config):
     tot_succ += succ
     goal_dists.append(goal_dist)
   print(f'Average reward across {config.eval_tasks} tasks: {rew_meter.avg}')
+  print(f'Average goal distance across {config.eval_tasks} tasks: {tf.reduce_mean(goal_dists)}')
   agent.logger.log_graph('total_reward', {'total_reward/dense': tot_rews})
   agent.logger.log_graph('reward_std',
       {'total_reward/dense_std': [tf.math.reduce_std(tot_rews)]})

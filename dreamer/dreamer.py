@@ -113,6 +113,7 @@ class Dreamer(tools.Module):
       self._metrics['opt_action_violation']
       self._metrics['opt_dynamics_coeff']
       self._metrics['opt_action_coeff']
+      self._metrics['opt_model_rewards']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
