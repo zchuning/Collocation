@@ -48,6 +48,7 @@ def define_config():
   config.clip_rewards = 'none'
   config.sparse_reward = False
   config.sparse_training = False
+  config.state_size = 4
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -62,6 +63,7 @@ def define_config():
   config.weight_decay = 0.0
   config.weight_decay_pattern = r'.*'
   config.inverse_model = False
+  config.state_regressor = False
   config.save_every = 100000
   # Training.
   config.batch_size = 50
@@ -182,6 +184,9 @@ class Dreamer(tools.Module):
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
+      if self._c.state_regressor:
+        states_pred = self._state(tf.stop_gradient(feat))
+        likes.state_regressor = tf.reduce_mean(states_pred.log_prob(data['state']))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -241,6 +246,8 @@ class Dreamer(tools.Module):
       self._inverse = models.ActionDecoder(
         self._actdim, 4, self._c.num_units, self._c.action_dist,
         init_std=self._c.action_init_std, act=act)
+    if self._c.state_regressor:
+      self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act, name='state_regressor')
     if self._c.pcont:
       self._pcont = models.DenseDecoder(
           (), 3, self._c.num_units, 'binary', act=act)
@@ -251,6 +258,8 @@ class Dreamer(tools.Module):
     model_modules = [self._encode, self._dynamics, self._decode, self._reward]
     if self._c.inverse_model:
       model_modules.append(self._inverse)
+    if self._c.state_regressor:
+      model_modules.append(self._state)
     if self._c.pcont:
       model_modules.append(self._pcont)
     Optimizer = functools.partial(
