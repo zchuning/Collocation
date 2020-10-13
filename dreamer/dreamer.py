@@ -46,9 +46,9 @@ def define_config():
   config.prefill = 5000
   config.eval_noise = 0.0
   config.clip_rewards = 'none'
-  config.sparse_reward = False
-  config.sparse_training = False
-  config.state_size = 4
+  config.collect_sparse_reward = False
+  config.use_sparse_reward = False
+  config.state_size = 9
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -174,13 +174,12 @@ class Dreamer(tools.Module):
       post, prior = self._dynamics.observe(embed, data['action'])
       feat = self._dynamics.get_feat(post)
       image_pred = self._decode(feat)
-      reward_pred = self._reward(feat)
+      reward_pred = self._dense_reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      if self._c.sparse_training:
-        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
-      else:
-        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if 'sparse_reward' in data:
+        likes.sparse_reward = tf.reduce_mean(self._sparse_reward(feat).log_prob(data['sparse_reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
@@ -241,7 +240,11 @@ class Dreamer(tools.Module):
     self._dynamics = models.RSSM(
         self._c.stoch_size, self._c.deter_size, self._c.deter_size)
     self._decode = models.ConvDecoder(self._c.cnn_depth, cnn_act)
-    self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
+    self._dense_reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
+    self._sparse_reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
+    self._reward = self._dense_reward
+    if self._c.use_sparse_reward:
+      self._reward = self._sparse_reward
     if self._c.inverse_model:
       self._inverse = models.ActionDecoder(
         self._actdim, 4, self._c.num_units, self._c.action_dist,
@@ -255,7 +258,7 @@ class Dreamer(tools.Module):
     self._actor = models.ActionDecoder(
         self._actdim, 4, self._c.num_units, self._c.action_dist,
         init_std=self._c.action_init_std, act=act)
-    model_modules = [self._encode, self._dynamics, self._decode, self._reward]
+    model_modules = [self._encode, self._dynamics, self._decode, self._dense_reward, self._sparse_reward]
     if self._c.inverse_model:
       model_modules.append(self._inverse)
     if self._c.state_regressor:
@@ -398,7 +401,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       (f'{prefix}/return', float(episode['reward'].sum())),
       (f'{prefix}/length', len(episode['reward']) - 1),
       (f'episodes', episodes)]
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     metrics.append((f'{prefix}/sparse_return', float(episode['sparse_reward'].sum())))
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
@@ -418,7 +421,7 @@ def make_env(config, writer, prefix, datadir, store):
     callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
   callbacks.append(
       lambda ep: summarize_episode(ep, config, datadir, writer, prefix))
-  env = wrappers.Collect(env, callbacks, config.precision, config.sparse_reward)
+  env = wrappers.Collect(env, callbacks, config.precision, config.collect_sparse_reward)
   env = wrappers.RewardObs(env)
   return env
 
