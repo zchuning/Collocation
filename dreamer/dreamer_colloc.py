@@ -182,6 +182,7 @@ class DreamerColloc(Dreamer):
     # Run second-order solver
     dyn_losses, act_losses, rewards = [], [], []
     model_rewards = []
+    plans = []
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
@@ -189,6 +190,7 @@ class DreamerColloc(Dreamer):
       plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      plans.append(plan)
       # act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
@@ -259,6 +261,7 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     info = map_dict(lambda x: x[-1] / hor, curves)
+    info['plans'] = plans
     return act_preds, img_preds, feat_preds, info
 
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
