@@ -112,11 +112,20 @@ class MetaWorld(DreamerEnv):
     self._size = (self._width, self._width)
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
-    self._offscreen.cam.azimuth = 205
-    self._offscreen.cam.elevation = -165
-    self._offscreen.cam.distance = 2.6
-    self._offscreen.cam.lookat[0] = 1.1
-    self._offscreen.cam.lookat[1] = 1.1
+    # self._offscreen.cam.azimuth = 205
+    # self._offscreen.cam.elevation = -165
+    # self._offscreen.cam.distance = 2.6
+    # self._offscreen.cam.lookat[0] = 1.1
+    # self._offscreen.cam.lookat[1] = 1.1
+    # self._offscreen.cam.lookat[2] = -0.1
+    
+    # Pushing parameters
+    # TODO make this a parameter
+    self._offscreen.cam.azimuth = 155
+    self._offscreen.cam.elevation = -150
+    self._offscreen.cam.distance = 0.9
+    self._offscreen.cam.lookat[0] = 0.3
+    self._offscreen.cam.lookat[1] = 0.55
     self._offscreen.cam.lookat[2] = -0.1
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
