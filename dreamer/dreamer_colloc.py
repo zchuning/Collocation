@@ -867,7 +867,7 @@ def colloc_simulate(agent, config, env, save_images=True):
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward, total_sparse_reward = 0, None
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     total_sparse_reward = 0
   start = time.time()
   for i in range(0, num_iter, config.mpc_steps):
@@ -900,7 +900,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     for j in range(len(act_pred_np)):
       obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
-      if config.sparse_reward:
+      if config.collect_sparse_reward:
           total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
@@ -916,7 +916,7 @@ def colloc_simulate(agent, config, env, save_images=True):
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     print(f"Total sparse reward: {total_sparse_reward}")
     agent.logger.log_graph('true_sparse_reward', {'rewards/true': [total_sparse_reward]})
   print(f"Success: {success}")
@@ -958,7 +958,7 @@ def main(config):
     tot_rew, tot_sp_rew, succ, goal_dist = colloc_simulate(agent, config, env, save_images)
     rew_meter.update(tot_rew)
     tot_rews.append(tot_rew)
-    if config.sparse_reward:
+    if config.collect_sparse_reward:
       tot_sp_rews.append(tot_sp_rew)
       sp_rew_meter.update(tot_sp_rew)
     tot_succ += succ
@@ -967,7 +967,7 @@ def main(config):
   agent.logger.log_graph('total_reward', {'total_reward/dense': tot_rews})
   agent.logger.log_graph('reward_std',
       {'total_reward/dense_std': [tf.math.reduce_std(tot_rews)]})
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     print(f'Average sparse reward across {config.eval_tasks} tasks: {sp_rew_meter.avg}')
     agent.logger.log_graph('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
     agent.logger.log_graph('sparse_reward_std',
