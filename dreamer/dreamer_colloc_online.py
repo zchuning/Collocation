@@ -61,6 +61,9 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
+      if self._c.state_regressor:
+        states_pred = self._state(tf.stop_gradient(feat))
+        likes.state_regressor = tf.reduce_mean(states_pred.log_prob(data['state']))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']

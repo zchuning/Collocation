@@ -776,10 +776,12 @@ class DreamerColloc(Dreamer):
       post, prior = self._dynamics.observe(embed, data['action'])
       feat = self._dynamics.get_feat(post)
       image_pred = self._decode(feat)
-      reward_pred = self._reward(feat)
+      reward_pred = self._dense_reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
       likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if 'sparse_reward' in data:
+        likes.sparse_reward = tf.reduce_mean(self._sparse_reward(feat).log_prob(data['sparse_reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))

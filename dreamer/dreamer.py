@@ -119,6 +119,10 @@ class Dreamer(tools.Module):
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
+    # print("--------------------------------------self variables post")
+    # for var in self.variables:
+    #     print(var.name)
+    # assert(False)
 
   def __call__(self, obs, reset, state=None, training=True):
     step = self._step.numpy().item()
@@ -250,7 +254,7 @@ class Dreamer(tools.Module):
         self._actdim, 4, self._c.num_units, self._c.action_dist,
         init_std=self._c.action_init_std, act=act)
     if self._c.state_regressor:
-      self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act, name='state_regressor')
+      self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act)
     if self._c.pcont:
       self._pcont = models.DenseDecoder(
           (), 3, self._c.num_units, 'binary', act=act)
