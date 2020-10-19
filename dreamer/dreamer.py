@@ -116,6 +116,7 @@ class Dreamer(tools.Module):
       self._metrics['opt_dynamics_coeff']
       self._metrics['opt_action_coeff']
       self._metrics['opt_model_rewards']
+      self._metrics['opt_plans']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
@@ -182,7 +183,7 @@ class Dreamer(tools.Module):
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
       likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
-      if 'sparse_reward' in data:
+      if 'sparse_reward' in data :
         likes.sparse_reward = tf.reduce_mean(self._sparse_reward(feat).log_prob(data['sparse_reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
