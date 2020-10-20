@@ -55,13 +55,16 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      if self._c.sparse_training:
+      if self._c.use_sparse_reward:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
       else:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
+      if self._c.state_regressor:
+        states_pred = self._state(tf.stop_gradient(feat))
+        likes.state_regressor = tf.reduce_mean(states_pred.log_prob(data['state']))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -131,7 +134,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     # TODO check whether anonymous functions work correctly in graph mode! They seem to, but it's not clear
     if self._c.planning_task == "colloc_second_order":
       act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
-      for k, v in info.items():
+      for k, v in info['metrics'].items():
         self._metrics[f'opt_{k}'].update_state(v)
     elif self._c.planning_task == "shooting_cem":
       act_pred, img_pred, feat_pred = self.shooting_cem(None, None, init_feat=feat, verbose=False)

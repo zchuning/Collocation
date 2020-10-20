@@ -180,8 +180,8 @@ class DreamerColloc(Dreamer):
     mu = tf.ones(hor)
 
     # Run second-order solver
-    dyn_losses, act_losses, rewards = [], [], []
-    model_rewards = []
+    dyn_losses, act_losses, rewards, model_rewards = [], [], [], []
+    plans = []
     dyn_coeffs, act_coeffs = [], []
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
@@ -189,6 +189,7 @@ class DreamerColloc(Dreamer):
       plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      plans.append(plan)
       # act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
@@ -258,7 +259,7 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
       img_preds = None
-    info = map_dict(lambda x: x[-1] / hor, curves)
+    info = {'metrics': map_dict(lambda x: x[-1] / hor, curves), 'plans': plans}
     return act_preds, img_preds, feat_preds, info
 
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
@@ -776,7 +777,10 @@ class DreamerColloc(Dreamer):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
+      if self._c.use_sparse_reward:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
+      else:
+        likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
       if self._c.inverse_model:
         inverse_pred = self._inverse(feat[:, :-1], feat[:, 1:])
         likes.inverse = tf.reduce_mean(inverse_pred.log_prob(data['action'][:, :-1]))
@@ -868,7 +872,7 @@ def colloc_simulate(agent, config, env, save_images=True):
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward, total_sparse_reward = 0, 0
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     total_sparse_reward = 0
   start = time.time()
   for i in range(0, num_iter, config.mpc_steps):
@@ -916,7 +920,7 @@ def colloc_simulate(agent, config, env, save_images=True):
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     print(f"Total sparse reward: {total_sparse_reward}")
     agent.logger.log_graph('true_sparse_reward', {'rewards/true': [total_sparse_reward]})
   print(f"Success: {success}")
@@ -958,7 +962,7 @@ def main(config):
     tot_rew, tot_sp_rew, succ, goal_dist = colloc_simulate(agent, config, env, save_images)
     rew_meter.update(tot_rew)
     tot_rews.append(tot_rew)
-    if config.sparse_reward:
+    if config.collect_sparse_reward:
       tot_sp_rews.append(tot_sp_rew)
       sp_rew_meter.update(tot_sp_rew)
     tot_succ += succ
@@ -968,7 +972,7 @@ def main(config):
   agent.logger.log_graph('total_reward', {'total_reward/dense': tot_rews})
   agent.logger.log_graph('reward_std',
       {'total_reward/dense_std': [tf.math.reduce_std(tot_rews)]})
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     print(f'Average sparse reward across {config.eval_tasks} tasks: {sp_rew_meter.avg}')
     agent.logger.log_graph('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
     agent.logger.log_graph('sparse_reward_std',

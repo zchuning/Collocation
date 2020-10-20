@@ -46,8 +46,8 @@ def define_config():
   config.prefill = 5000
   config.eval_noise = 0.0
   config.clip_rewards = 'none'
-  config.sparse_reward = False
-  config.sparse_training = False
+  config.collect_sparse_reward = False
+  config.use_sparse_reward = False
   config.state_size = 4
   # Model.
   config.deter_size = 200
@@ -177,7 +177,7 @@ class Dreamer(tools.Module):
       reward_pred = self._reward(feat)
       likes = tools.AttrDict()
       likes.image = tf.reduce_mean(image_pred.log_prob(data['image']))
-      if self._c.sparse_training:
+      if self._c.use_sparse_reward:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['sparse_reward']))
       else:
         likes.reward = tf.reduce_mean(reward_pred.log_prob(data['reward']))
@@ -247,7 +247,7 @@ class Dreamer(tools.Module):
         self._actdim, 4, self._c.num_units, self._c.action_dist,
         init_std=self._c.action_init_std, act=act)
     if self._c.state_regressor:
-      self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act, name='state_regressor')
+      self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act)
     if self._c.pcont:
       self._pcont = models.DenseDecoder(
           (), 3, self._c.num_units, 'binary', act=act)
@@ -398,7 +398,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       (f'{prefix}/return', float(episode['reward'].sum())),
       (f'{prefix}/length', len(episode['reward']) - 1),
       (f'episodes', episodes)]
-  if config.sparse_reward:
+  if config.collect_sparse_reward:
     metrics.append((f'{prefix}/sparse_return', float(episode['sparse_reward'].sum())))
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
@@ -418,7 +418,7 @@ def make_env(config, writer, prefix, datadir, store):
     callbacks.append(lambda ep: tools.save_episodes(datadir, [ep]))
   callbacks.append(
       lambda ep: summarize_episode(ep, config, datadir, writer, prefix))
-  env = wrappers.Collect(env, callbacks, config.precision, config.sparse_reward)
+  env = wrappers.Collect(env, callbacks, config.precision, config.collect_sparse_reward)
   env = wrappers.RewardObs(env)
   return env
 
