@@ -48,7 +48,7 @@ def define_config():
   config.clip_rewards = 'none'
   config.collect_sparse_reward = False
   config.use_sparse_reward = False
-  config.state_size = 4
+  config.state_size = 9
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
