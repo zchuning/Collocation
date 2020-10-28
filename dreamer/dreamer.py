@@ -442,6 +442,8 @@ def make_bare_env(config):
     env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
   elif suite == "d4rl":
     env = wrappers.KitchenEnv(task, config.action_repeat)
+  elif suite == "desk":
+    env = wrappers.DeskEnv(task, config.action_repeat)
   else:
     raise NotImplementedError(suite)
   return env

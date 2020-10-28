@@ -73,10 +73,7 @@ class BaseMujocoEnv(BaseEnv):
     :param mode: Mode to render with (dual by default)
     :return: uint8 numpy array with rendering from sim
     """
-    images = np.zeros((self._ncam, self._frame_height, self._frame_width, 3), dtype=np.uint8)
-    for i, cam in enumerate(self.cameras):
-      images[i] = self.sim.render(self._frame_width, self._frame_height, camera_name=cam)
-      # self.sim.render(self._frame_width, self._frame_height, camera_name=cam, mode='window', device_id=0)
+    images = self.sim.render(self._frame_width, self._frame_height, camera_name=self.cameras[-1])
       # plt.switch_backend('TkAgg')
       # plt.imshow(images[i][::-1])
       # plt.show()

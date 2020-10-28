@@ -60,6 +60,25 @@ class DreamerEnv():
     return {'image': image, 'state': state}
 
 
+class DeskEnv(DreamerEnv):
+  def __init__(self, task=None, action_repeat=1):
+    super().__init__(action_repeat)
+    from envs.franka_desk.franka_desk import FrankaDesk
+    with self.LOCK:
+      env_params = {
+        # resolution sufficient for 16x anti-aliasing
+        'viewer_image_height': 64,
+        'viewer_image_width': 64,
+        'textured': True,
+      }
+      self._env = FrankaDesk(env_params)
+
+  def _get_obs(self, state):
+    image = self._env.render()
+    state['image'] = image
+    return state
+
+  
 class DreamerMujocoEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1):
     super().__init__(action_repeat)
