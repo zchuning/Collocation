@@ -40,7 +40,7 @@ def define_config():
   config = dreamer.define_config()
 
   # Planning
-  config.planning_task = 'colloc_gd'
+  config.planning_task = 'colloc_second_order'
   config.planning_horizon = 10
   config.mpc_steps = 10
   config.cem_steps = 60
@@ -872,8 +872,6 @@ def colloc_simulate(agent, config, env, save_images=True):
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward, total_sparse_reward = 0, 0
-  if config.collect_sparse_reward:
-    total_sparse_reward = 0
   start = time.time()
   for i in range(0, num_iter, config.mpc_steps):
     print("Planning step {0} of {1}".format(i + 1, num_iter))
@@ -905,7 +903,8 @@ def colloc_simulate(agent, config, env, save_images=True):
     for j in range(len(act_pred_np)):
       obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
-      total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
+      if 'success' in info:
+        total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # Logging
@@ -915,15 +914,21 @@ def colloc_simulate(agent, config, env, save_images=True):
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
-  goal_dist = info['goalDist'] if 'goalDist' in info else info['reachDist']
-  success = float(total_sparse_reward > 0) # info['success']
+  if 'goalDist' in info:
+    goal_dist = info['goalDist']
+  elif 'reachDist' in info:
+    goal_dist = info['reachDist']
+  else:
+    goal_dist = np.nan
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
-  if config.collect_sparse_reward:
+  success = np.nan
+  if 'success' in info:
+    success = float(total_sparse_reward > 0) # info['success']
     print(f"Total sparse reward: {total_sparse_reward}")
     agent.logger.log_graph('true_sparse_reward', {'rewards/true': [total_sparse_reward]})
-  print(f"Success: {success}")
+    print(f"Success: {success}")
   if save_images:
     if img_pred is not None:
       img_preds = np.vstack(img_preds)
@@ -970,13 +975,11 @@ def main(config):
   print(f'Average reward across {config.eval_tasks} tasks: {rew_meter.avg}')
   print(f'Average goal distance across {config.eval_tasks} tasks: {tf.reduce_mean(goal_dists)}')
   agent.logger.log_graph('total_reward', {'total_reward/dense': tot_rews})
-  agent.logger.log_graph('reward_std',
-      {'total_reward/dense_std': [tf.math.reduce_std(tot_rews)]})
+  agent.logger.log_graph('reward_std', {'total_reward/dense_std': [np.std(tot_rews)]})
   if config.collect_sparse_reward:
     print(f'Average sparse reward across {config.eval_tasks} tasks: {sp_rew_meter.avg}')
     agent.logger.log_graph('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
-    agent.logger.log_graph('sparse_reward_std',
-        {'total_reward/sparse_std': [tf.math.reduce_std(tot_sp_rews)]})
+    agent.logger.log_graph('sparse_reward_std', {'total_reward/sparse_std': [np.std(tot_sp_rews)]})
   print(f'Success rate: {tot_succ / config.eval_tasks}')
   agent.logger.log_graph('success_rate', {'total_reward/success': [tot_succ / config.eval_tasks]})
   agent.logger.log_hist('total_reward/goal_dist', goal_dists)

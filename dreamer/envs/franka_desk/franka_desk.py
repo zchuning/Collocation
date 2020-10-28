@@ -185,7 +185,7 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         # print('current', obs['state'][40])
         # print(self._goal_obj_pose[-1])
         
-        return obs, self.get_reward(), np.zeros([]), {}
+        return obs, self.get_reward(), np.zeros([]), {'success': self.get_success()}
 
     def update_mocap_pos(self):
         # print('mocap', self.data.mocap_pos)
@@ -198,6 +198,12 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         goal_door_pos = self._goal
         reward = - (curr_door_pos - goal_door_pos) ** 2
         return np.asarray(reward)
+
+    def get_success(self):
+        curr_door_pos = self.sim.data.qpos[40]
+        goal_door_pos = self._goal
+        distance = np.abs(curr_door_pos - goal_door_pos)
+        return np.asarray(distance < 0.1)
 
     def has_goal(self):
         return True
