@@ -8,6 +8,7 @@ import imageio
 from scipy.signal import butter, filtfilt
 from tqdm import tqdm
 
+from d4rl_repo.scripts.generate_kitchen_datasets import _obs_array_to_obs_dict
 
 def get_video(qpos, qvel):
     frames = []
@@ -43,15 +44,34 @@ def smooth(data):
     y = filtfilt(b, a, data, axis=0)
     return y
 
+def relabel_rewards(relabel_env, qpos, qvel):
+    length = qpos.shape[0]
+    rewards = np.zeros([length])
+    
+    for i in range(length):
+        relabel_env.reset()  # TODO only need to reset the task variable
+        relabel_env.set_state(qpos[i], qvel[i])
+        rewards[i] = relabel_env._get_reward_n_score(_obs_array_to_obs_dict(relabel_env._get_obs()))[0]['r_total']
+      
+    return rewards
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--env_name', type=str, default='kitchen-partial-v0')
+    parser.add_argument('--relabel_env_name', type=str, default='',
+                        help='used to relabel data with reward')
     parser.add_argument('--save_dir', type=str, default='./temp/episodes/')
     args = parser.parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
     
     env = gym.make(args.env_name)
+    if args.relabel_env_name:
+        import dreamer
+        if args.relabel_env_name == 'kitchen_microwave':
+            relabel_env = dreamer.wrappers.KitchenMicrowave(ref_min_score=0.0, ref_max_score=1.0)
+        elif args.relabel_env_name == 'kitchen_cabinet':
+            relabel_env = dreamer.wrappers.KitchenCabinet(ref_min_score=0.0, ref_max_score=1.0)
     
     dataset = env.get_dataset()
     qpos = dataset['observations'][:, :30]
@@ -76,6 +96,8 @@ if __name__ == "__main__":
         episode.image = get_video(smooth(qpos[start:end]),  qvel[start:end])
         episode.state = np.concatenate((smooth(qpos[start:end]),  qvel[start:end]), 1)
         episode.reward, episode.action = rewards[start:end], actions[start:end]
+        if args.relabel_env_name:
+            episode.reward = relabel_rewards(relabel_env, qpos[start:end],  qvel[start:end])
         episode.discount = np.ones((end - start,))
         episodes.append(episode)
     

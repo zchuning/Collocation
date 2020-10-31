@@ -35,3 +35,12 @@ python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_obstacle/far_g
 python3 dreamer.py --logdir ./logdir/pm_push/b01 --task colloc_pm_push --action_repeat=1 --time_limit=30 --batch_length=20 --kl_scale=0.1
 
 python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/pm_push/1g_b01/colloc --task colloc_pm_push  --action_repeat=1 --time_limit=20 --planning_task colloc_gd --planning_horizon 20 --mpc_steps 20  --batch_length=20 --logdir_colloc ./logdir/pm_push/1g_b01/colloc_20
+
+
+## Desk
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/desk/dreamer/offline/ --task desk_door --action_repeat 1 --time_limit 20  --planning_horizon 20 --mpc_steps 20 --gd_steps 200  --rew_res_wt 10 --dyn_threshold 1e-4 --act_threshold 1e-4 --coeff_normalization 1  --eval_tasks 1 --logdir_colloc ./logdir/desk/dreamer/offline_latco_20x1_rw10_dt1e-4_at_1e-4
+
+## Kitchen
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/kitchen/dreamer_mixeddata_microwave/offline/ --task d4rl_kitchen_microwave --action_repeat 1 --time_limit 20  --planning_horizon 20 --mpc_steps 20 --gd_steps 200  --rew_res_wt 10 --dyn_threshold 1e-4 --act_threshold 1e-4 --coeff_normalization 1  --eval_tasks 1 --logdir_colloc ./logdir/kitchen/dreamer_mixeddata_microwave/offline_latco_20x1_rw10_dt1e-4_at_1e-4
+
+python3 -m pdb -c continue dreamer_colloc.py --logdir ./logdir/kitchen/dreamer_mixeddata_cabinet/offline/ --task d4rl_kitchen_cabinet --action_repeat 1 --time_limit 20  --planning_horizon 20 --mpc_steps 20 --gd_steps 200  --rew_res_wt 10 --dyn_threshold 1e-4 --act_threshold 1e-4 --coeff_normalization 1  --eval_tasks 1 --logdir_colloc ./logdir/kitchen/dreamer_mixeddata_cabinet/offline_latco_20x1_rw10_dt1e-4_at_1e-4

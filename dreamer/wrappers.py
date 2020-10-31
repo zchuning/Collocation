@@ -107,11 +107,30 @@ class KitchenEnv(DreamerEnv):
     super().__init__(action_repeat)
     import d4rl
     with self.LOCK:
-      self._env = gym.make(task)
+      if task == 'kitchen_microwave':
+        self._env = KitchenMicrowave(ref_min_score=0.0, ref_max_score=1.0)
+      elif task == 'kitchen_cabinet':
+        self._env = KitchenCabinet(ref_min_score=0.0, ref_max_score=1.0)
+      else:
+        self._env = gym.make(task)
 
   def _get_obs(self, state):
     image = self.render('rgb_array')
     return {'image': image, 'state': state}
+
+
+# Define additional Kitchen tasks
+try:
+  import d4rl
+  from d4rl.kitchen.kitchen_envs import KitchenBase
+  
+  class KitchenMicrowave(KitchenBase):
+      TASK_ELEMENTS = ['microwave']
+
+  class KitchenCabinet(KitchenBase):
+    TASK_ELEMENTS = ['slide cabinet']
+except:
+  pass
 
 
 class MetaWorld(DreamerEnv):
