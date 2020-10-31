@@ -18,6 +18,7 @@ import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
 from blox.utils import AverageMeter, timing
 from blox.basic_types import map_dict
+from blox import AttrDefaultDict
 import time
 
 tf.get_logger().setLevel('ERROR')
@@ -139,24 +140,17 @@ class DreamerColloc(Dreamer):
     rew_c = tf.sqrt(mu)[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
 
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
-    dyn_c = dyn_c * normalize
-    act_c = act_c * normalize
-    rew_c = rew_c * normalize
-
-    dyn_res = dyn_c * dyn_res
-    act_res = act_c * act_res
-    rew_res = rew_c * rew_res
-    objective = tf.concat([dyn_res, act_res, rew_res], 1)
-    return objective
+    objective = normalize * tf.concat([dyn_c * dyn_res, act_c * act_res, rew_c * rew_res], 1)
+    return objective, dyn_res, act_res, rew_res, dyn_c * dyn_res, act_c * act_res, rew_c * rew_res
 
   @tf.function
   def opt_step(self, plan, init_feat, goal_feat, lam, nu, mu):
     init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
-    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu, mu)
+    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu, mu)[0]
     plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=self._c.gn_damping)
     return plan
 
-  def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
+  def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True, log_extras=False):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
@@ -180,9 +174,8 @@ class DreamerColloc(Dreamer):
     mu = tf.ones(hor)
 
     # Run second-order solver
-    dyn_losses, act_losses, rewards, model_rewards = [], [], [], []
-    plans = []
-    dyn_coeffs, act_coeffs = [], []
+    plans = [plan]
+    metrics = AttrDefaultDict(list)
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
@@ -209,15 +202,32 @@ class DreamerColloc(Dreamer):
       act_loss = tf.reduce_sum(act_viol)
       dyn_coeff = self._c.dyn_res_wt**2 * tf.reduce_sum(lam)
       act_coeff = self._c.act_res_wt**2 * tf.reduce_sum(nu)
-      dyn_losses.append(dyn_loss)
-      act_losses.append(act_loss)
-      rewards.append(reward)
-      dyn_coeffs.append(dyn_coeff)
-      act_coeffs.append(act_coeff)
+      metrics.dynamics.append(dyn_loss)
+      metrics.action_violation.append(act_loss)
+      metrics.rewards.append(reward)
+      metrics.dynamics_coeff.append(dyn_coeff)
+      metrics.action_coeff.append(act_coeff)
 
-      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      # Record model sample rewards
+      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
       model_rew = self._reward(model_feats).mode()
-      model_rewards.append(tf.reduce_sum(model_rew))
+      metrics.model_rewards.append(tf.reduce_sum(model_rew))
+      
+      if log_extras:
+        # Record model rewards
+        model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+        model_rew = self._reward(model_feats).mode()
+        metrics.model_mean_rewards.append(tf.reduce_sum(model_rew))
+        
+        # Record residuals
+        _, dyn_res, act_res, rew_res, dyn_resw, act_resw, rew_resw = \
+          self.pair_residual_func_body(plan[0,:-1], plan[0,1:], goal_feat, lam, nu, mu)
+        metrics.residual_dynamics.append(tf.reduce_sum(dyn_res ** 2))
+        metrics.residual_actions.append(tf.reduce_sum(act_res ** 2))
+        metrics.residual_rewards.append(tf.reduce_sum(rew_res ** 2))
+        metrics.weighted_residual_dynamics.append(tf.reduce_sum(dyn_resw ** 2))
+        metrics.weighted_residual_actions.append(tf.reduce_sum(act_resw ** 2))
+        metrics.weighted_residual_rewards.append(tf.reduce_sum(rew_resw ** 2))
 
       # Update lagrange multipliers
       if i % self._c.lam_int == self._c.lam_int - 1:
@@ -247,19 +257,17 @@ class DreamerColloc(Dreamer):
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:
-      print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
-      print(f"Final average action violation: {act_losses[-1] / hor}")
-      print(f"Final total reward: {rewards[-1]}")
+      print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
+      print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
+      print(f"Final total reward: {metrics.rewards[-1]}")
       print(f"Final average initial state violation: {init_loss}")
-    curves = dict(rewards=rewards, dynamics=dyn_losses, action_violation=act_losses,
-                  dynamics_coeff=dyn_coeffs, action_coeff=act_coeffs, model_rewards=model_rewards)
     if save_images:
       img_preds = self._decode(feat_preds).mode()
-      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in metrics.items()})
       self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
       img_preds = None
-    info = {'metrics': map_dict(lambda x: x[-1] / hor, curves), 'plans': plans}
+    info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)), 'plans': plans}
     return act_preds, img_preds, feat_preds, info
 
   def collocation_so_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
@@ -884,7 +892,7 @@ def colloc_simulate(agent, config, env, save_images=True):
       else:
         act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
     elif pt == 'colloc_second_order':
-      act_pred, img_pred, feat_pred, _ = agent.collocation_so(obs, goal_obs, save_images, i)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=True)
     elif pt == 'colloc_second_order_goal':
       act_pred, img_pred, feat_pred = agent.collocation_so_goal_1(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':
