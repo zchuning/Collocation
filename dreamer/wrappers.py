@@ -170,8 +170,39 @@ class MetaWorld(DreamerEnv):
     return goal_obs
 
 
-class MetaWorldSparseReward(MetaWorld):
+class MetaWorldVis(MetaWorld):
+  def __init__(self, name, action_repeat, width):
+    super().__init__(name, action_repeat)
+    self._width = width
+    self._size = (self._width, self._width)
+  
+  def render_state(self, state):
+    assert (len(state.shape) == 1)
+    # Save init configs
+    hand_init_pos = self._env.hand_init_pos
+    obj_init_pos = self._env.init_config['obj_init_pos']
+    # Render state
+    hand_pos, obj_pos, hand_to_goal = np.split(state, 3)
+    self._env.hand_init_pos = hand_pos
+    self._env.init_config['obj_init_pos'] = obj_pos
+    self._env.reset_model()
+    obs = self._get_obs(state)
+    # Revert environment
+    self._env.hand_init_pos = hand_init_pos
+    self._env.init_config['obj_init_pos'] = obj_init_pos
+    self._env.reset()
+    return obs['image']
+  
+  def render_states(self, states):
+    assert (len(states.shape) == 2)
+    imgs = []
+    for s in states:
+      img = self.render_state(s)
+      imgs.append(img)
+    return np.array(imgs)
 
+
+class MetaWorldSparseReward(MetaWorld):
   def __init__(self, name, action_repeat):
     super().__init__(name, action_repeat)
 
