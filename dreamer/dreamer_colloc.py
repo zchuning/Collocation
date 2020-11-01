@@ -1,21 +1,15 @@
 import argparse
-import collections
-import functools
-import json
-import imageio
 import os
 import pathlib
 import sys
-import time
 
+import imageio
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
 import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.keras.mixed_precision import experimental as prec
 from blox.utils import AverageMeter, timing
 from blox.basic_types import map_dict
 from blox import AttrDefaultDict
@@ -27,14 +21,10 @@ from tensorflow_probability import distributions as tfd
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
-import models
-import tools
-import wrappers
 from dreamer import Dreamer, preprocess, make_bare_env
 import dreamer
-import gn_solver
-import gn_solver_goal
-from utils import logging
+from planners import gn_solver, gn_solver_goal
+from utils import logging, wrappers, tools
 
 
 def define_config():

@@ -1,11 +1,8 @@
 import argparse
-import collections
-import functools
-import json
 import os
 import pathlib
 import sys
-import time
+
 from tqdm import tqdm
 
 """ This script is used to train Dreamer on an offline dataset without online interaction"""
@@ -13,7 +10,6 @@ from tqdm import tqdm
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
-import numpy as np
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
 
@@ -23,10 +19,8 @@ from tensorflow_probability import distributions as tfd
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
-import models
-import tools
-import wrappers
-from dreamer import Dreamer, preprocess, count_steps, load_dataset, summarize_episode, make_env
+from utils import tools
+from dreamer import Dreamer, make_env
 import dreamer
 
 def define_config():

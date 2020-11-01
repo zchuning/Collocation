@@ -22,9 +22,7 @@ from tensorflow_probability import distributions as tfd
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
-import models
-import tools
-import wrappers
+from utils import wrappers, tools, models
 
 
 def define_config():

@@ -1,7 +1,10 @@
-from wrappers import DreamerMujocoEnv
 # from tools import AttrDict
 import numpy as np
 import skvideo.io
+
+from utils.wrappers import KitchenEnv
+
+
 # import blox
 
 class AttrDict(dict):

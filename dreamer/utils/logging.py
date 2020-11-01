@@ -1,8 +1,8 @@
-import tensorflow as tf
-import numpy as np
-
 import imageio
-import tools
+import numpy as np
+import tensorflow as tf
+
+from utils import tools
 
 
 class Logger():

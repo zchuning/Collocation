@@ -1,16 +1,12 @@
 import argparse
-import collections
 import functools
-import json
 import os
 import pathlib
 import sys
-import time
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
-import numpy as np
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
 
@@ -20,10 +16,9 @@ from tensorflow_probability import distributions as tfd
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
-import models
-import tools
-import wrappers
-from dreamer import Dreamer, make_env, count_steps, summarize_episode, load_dataset, preprocess
+from utils import wrappers, tools, models
+from dreamer import Dreamer, make_env, count_steps
+
 
 def define_config():
   config = tools.AttrDict()

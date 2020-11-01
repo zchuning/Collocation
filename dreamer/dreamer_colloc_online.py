@@ -1,24 +1,14 @@
 import argparse
-import collections
 import functools
-import json
-import imageio
 import os
 import pathlib
 import sys
-import time
-
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
-import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.keras.mixed_precision import experimental as prec
-from blox.utils import AverageMeter
 from blox.utils import timing
-import time
 
 tf.get_logger().setLevel('ERROR')
 
@@ -26,13 +16,9 @@ from tensorflow_probability import distributions as tfd
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
-import models
-import tools
-import wrappers
 import dreamer
 import dreamer_colloc
-import gn_solver
-from utils import logging
+from utils import wrappers, tools
 
 
 def define_config():

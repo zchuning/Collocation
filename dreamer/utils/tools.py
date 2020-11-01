@@ -195,6 +195,8 @@ def load_episodes(directory, rescan, length=None, balance=False, seed=0):
         else:
           index = int(random.randint(0, available))
         episode = {k: v[index: index + length] for k, v in episode.items()}
+      # TODO fix this: the states in the offline Kitchen data are somehow messed up.
+      episode['state'] = episode['state'][:, :59]
       yield episode
 
 

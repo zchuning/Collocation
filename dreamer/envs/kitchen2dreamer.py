@@ -1,14 +1,14 @@
-import os
 import argparse
+import os
+
 import gym
 import numpy as np
-import d4rl
-from blox import AttrDict, rmap
-import imageio
+from d4rl_repo.scripts.generate_kitchen_datasets import _obs_array_to_obs_dict
 from scipy.signal import butter, filtfilt
 from tqdm import tqdm
 
-from d4rl_repo.scripts.generate_kitchen_datasets import _obs_array_to_obs_dict
+from blox import AttrDict, rmap
+
 
 def get_video(qpos, qvel):
     frames = []
@@ -67,11 +67,10 @@ if __name__ == "__main__":
     
     env = gym.make(args.env_name)
     if args.relabel_env_name:
-        import dreamer
         if args.relabel_env_name == 'kitchen_microwave':
-            relabel_env = dreamer.wrappers.KitchenMicrowave(ref_min_score=0.0, ref_max_score=1.0)
+            relabel_env = utils.wrappers.KitchenMicrowave(ref_min_score=0.0, ref_max_score=1.0)
         elif args.relabel_env_name == 'kitchen_cabinet':
-            relabel_env = dreamer.wrappers.KitchenCabinet(ref_min_score=0.0, ref_max_score=1.0)
+            relabel_env = utils.wrappers.KitchenCabinet(ref_min_score=0.0, ref_max_score=1.0)
     
     dataset = env.get_dataset()
     qpos = dataset['observations'][:, :30]

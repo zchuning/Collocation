@@ -1,11 +1,12 @@
+from functools import partial
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers as tfkl
-from tensorflow_probability import distributions as tfd
 from tensorflow.keras.mixed_precision import experimental as prec
-from functools import partial
+from tensorflow_probability import distributions as tfd
 
-import tools
+from utils import tools
 
 
 class RSSM(tools.Module):
