@@ -6,6 +6,7 @@ import os
 import pathlib
 import sys
 import time
+import yaml
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
@@ -13,6 +14,7 @@ os.environ['MUJOCO_GL'] = 'egl'
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.mixed_precision import experimental as prec
+from blox import dl_infrastructure
 
 tf.get_logger().setLevel('ERROR')
 
@@ -449,7 +451,7 @@ def make_bare_env(config):
   return env
 
 
-def main(config):
+def setup(config, logdir):
   if config.gpu_growth:
     for gpu in tf.config.experimental.list_physical_devices('GPU'):
       tf.config.experimental.set_memory_growth(gpu, True)
@@ -457,13 +459,22 @@ def main(config):
   if config.precision == 16:
     prec.set_policy(prec.Policy('mixed_float16'))
   config.steps = int(config.steps)
-  config.logdir.mkdir(parents=True, exist_ok=True)
-  print('Logdir', config.logdir)
+  logdir.mkdir(parents=True, exist_ok=True)
+  print('Logdir', logdir)
+  datadir = logdir / 'episodes'
+  
+  # Save run parameters
+  dl_infrastructure.save_cmd(logdir)
+  dl_infrastructure.save_git(logdir)
+  with open(logdir / 'config.yaml', 'w') as yaml_file: yaml.dump(config, yaml_file, default_flow_style=False)
+  return datadir
 
+
+def main(config):
+  datadir = setup(config, config.logdir)
   # Create environments.
-  datadir = config.logdir / 'episodes'
   writer = tf.summary.create_file_writer(
-      str(config.logdir), max_queue=1000, flush_millis=20000)
+    str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()
   train_envs = [wrappers.Async(lambda: make_env(
       config, writer, 'train', datadir, store=config.train_store), config.parallel)

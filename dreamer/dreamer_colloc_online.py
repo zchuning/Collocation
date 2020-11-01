@@ -162,18 +162,8 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
 
 
 def main(config):
-  if config.gpu_growth:
-    for gpu in tf.config.experimental.list_physical_devices('GPU'):
-      tf.config.experimental.set_memory_growth(gpu, True)
-  assert config.precision in (16, 32), config.precision
-  if config.precision == 16:
-    prec.set_policy(prec.Policy('mixed_float16'))
-  config.steps = int(config.steps)
-  config.logdir.mkdir(parents=True, exist_ok=True)
-  print('Logdir', config.logdir)
-
+  datadir = dreamer.setup(config, config.logdir)
   # Create environments.
-  datadir = config.logdir / 'episodes'
   writer = tf.summary.create_file_writer(
       str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()

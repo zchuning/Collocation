@@ -947,20 +947,9 @@ def colloc_simulate(agent, config, env, save_images=True):
 
 
 def main(config):
-  if config.gpu_growth:
-    for gpu in tf.config.experimental.list_physical_devices('GPU'):
-      tf.config.experimental.set_memory_growth(gpu, True)
-  assert config.precision in (16, 32), config.precision
-  if config.precision == 16:
-    prec.set_policy(prec.Policy('mixed_float16'))
-  config.steps = int(config.steps)
-  config.logdir.mkdir(parents=True, exist_ok=True)
-  print('Logdir', config.logdir)
-  config.logdir_colloc.mkdir(parents=True, exist_ok=True)
-
+  dreamer.setup(config, config.logdir_colloc)
   # Create environment.
   env = make_env(config)
-
   # Create agent.
   actspace = env.action_space
   datadir = config.logdir / 'episodes'
