@@ -452,6 +452,12 @@ def build_agent(config, env):
   elif config.planning_task == 'colloc_shoot':
     from planners.colloc_shoot import CollocShootAgent
     agent = CollocShootAgent(config, datadir, actspace)
+  elif config.planning_task == 'shoot_colloc':
+    from planners.shoot_colloc import ShootCollocAgent
+    agent = ShootCollocAgent(config, datadir, actspace)
+  elif config.planning_task == 'shootcem_colloc':
+    from planners.shootcem_colloc import ShootCEMCollocAgent
+    agent = ShootCEMCollocAgent(config, datadir, actspace)
   else:
     agent = DreamerColloc(config, datadir, actspace)
   

@@ -5,7 +5,7 @@ from blox.basic_types import map_dict
 import numpy as np
 
 
-class CollocShootAgent(DreamerColloc):
+class ShootCollocAgent(DreamerColloc):
   def _plan(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True, log_extras=False):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -13,23 +13,54 @@ class CollocShootAgent(DreamerColloc):
     dyn_threshold = self._c.dyn_threshold
     act_threshold = self._c.act_threshold
     rew_threshold = self._c.rew_threshold
-  
+
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
     if goal_obs is not None:
       goal_feat, _ = self.get_init_feat(goal_obs)
     else:
       goal_feat = None
+      
+    ## Shooting
+    metrics = AttrDefaultDict(list)
+    t = tf.Variable(tf.random.normal((hor, self._actdim), dtype=self._float))
+    lambdas = tf.ones([hor, self._actdim])
+    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
+    for i in range(self._c.gd_steps):
+      with tf.GradientTape() as g:
+        g.watch(t)
+        actions = t[None, :]
+        feats = self._dynamics.imagine_feat(actions, init_feat, deterministic=True)
+        reward = tf.reduce_sum(self._reward(feats).mode(), axis=1)
+        actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
+        actions_constr = tf.reduce_sum(lambdas * actions_viol)
+        fitness = - self._c.rew_loss_scale * reward + self._c.act_loss_scale * actions_constr
+      grad = g.gradient(fitness, t)
+      opt.apply_gradients([(grad, t)])
+      t.assign(tf.clip_by_value(t, -1, 1))  # Prevent OOD preds
+      metrics.action_violation.append(tf.reduce_sum(actions_viol))
+      metrics.rewards.append(tf.reduce_sum(reward))
+      metrics.model_rewards.append(tf.reduce_sum(reward))
+      metrics.dynamics.append(0)
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        lambdas += self._c.lam_lr * actions_viol
+
+    act_preds = t[:min(hor, self._c.mpc_steps)]
+    img_preds = self._decode(feats).mode().numpy()
+    self.logger.log_video(f"shooting_plan/{step}", img_preds)
+  
     plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
-    plan = tf.reshape(plan, [1, hor + 1, var_len_step])
+    plan = tf.Variable(tf.reshape(plan, [1, hor + 1, var_len_step]))
+    # tf.Variable necessary for assignment to work
+    plan[0, 1:, -self._actdim:].assign(act_preds)
+    plan[:, 1:, :-self._actdim].assign(feats)
     lam = tf.ones(hor)
     nu = tf.ones(hor)
     mu = tf.ones(hor)
   
     plans = [plan]
-    metrics = AttrDefaultDict(list)
     ## Collocation
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
@@ -53,18 +84,17 @@ class CollocShootAgent(DreamerColloc):
       # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
     
       # Record losses and effective coefficients
-      dyn_loss = tf.reduce_sum(dyn_viol)
       act_loss = tf.reduce_sum(act_viol)
       dyn_coeff = self._c.dyn_res_wt ** 2 * tf.reduce_sum(lam)
       act_coeff = self._c.act_res_wt ** 2 * tf.reduce_sum(nu)
-      metrics.dynamics.append(dyn_loss)
+      metrics.dynamics.append(tf.reduce_sum(dyn_viol))
       metrics.action_violation.append(act_loss)
       metrics.rewards.append(reward)
       metrics.dynamics_coeff.append(dyn_coeff)
       metrics.action_coeff.append(act_coeff)
     
       # Record model sample rewards
-      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
       model_rew = self._reward(model_feats).mode()
       metrics.model_rewards.append(tf.reduce_sum(model_rew))
     
@@ -78,40 +108,15 @@ class CollocShootAgent(DreamerColloc):
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     
-    img_preds = self._decode(feat_preds).mode().numpy()
-    self.logger.log_video(f"collocation_plan/{step}", img_preds)
+    img_preds = self._decode(feat_preds).mode()
+    self.logger.log_video(f"collocation_plan/{step}", img_preds.numpy())
   
-    ## Shooting
-    t = tf.Variable(act_preds)
-    lambdas = tf.ones([hor, self._actdim])
-    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
-    for i in range(1000):
-      with tf.GradientTape() as g:
-        g.watch(t)
-        actions = t[None, :]
-        feats = self._dynamics.imagine_feat(actions, init_feat, deterministic=True)
-        reward = tf.reduce_sum(self._reward(feats).mode(), axis=1)
-        actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
-        actions_constr = tf.reduce_sum(lambdas * actions_viol)
-        fitness = - self._c.rew_loss_scale * reward + self._c.act_loss_scale * actions_constr
-      grad = g.gradient(fitness, t)
-      opt.apply_gradients([(grad, t)])
-      t.assign(tf.clip_by_value(t, -1, 1)) # Prevent OOD preds
-      metrics.action_violation.append(tf.reduce_sum(actions_viol))
-      metrics.rewards.append(tf.reduce_sum(reward))
-      metrics.model_rewards.append(tf.reduce_sum(reward))
-      if i % self._c.lam_int == self._c.lam_int - 1:
-        lambdas += self._c.lam_lr * actions_viol
-  
-    act_preds = t[:min(hor, self._c.mpc_steps)]
     if verbose:
       print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
       print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
       print(f"Final total reward: {metrics.rewards[-1]}")
       print(f"Final average initial state violation: {init_loss}")
     if save_images:
-      img_preds = self._decode(feats).mode()
-      self.logger.log_video(f"shooting_plan/{step}", img_preds.numpy())
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in metrics.items()})
       # self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
