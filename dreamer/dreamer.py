@@ -49,6 +49,7 @@ def define_config():
   config.collect_sparse_reward = False
   config.use_sparse_reward = False
   config.state_size = 9
+  config.img_sz = 64
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -443,7 +444,7 @@ def make_bare_env(config):
   elif suite == "d4rl":
     env = wrappers.KitchenEnv(task, config.action_repeat)
   elif suite == "desk":
-    env = wrappers.DeskEnv(task, config.action_repeat)
+    env = wrappers.DeskEnv(task, config.action_repeat, config.img_sz)
   else:
     raise NotImplementedError(suite)
   return env
