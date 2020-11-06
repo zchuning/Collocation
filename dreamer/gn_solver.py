@@ -309,7 +309,7 @@ def make_blocks(pair_residual_func, init_residual_func, x,
 
 
 def solve_step(pair_residual_function, init_residual_function, x,
-               pair_loss_func = None, damping=0.0, noise_amount=None, fixed_damping_amount=1.0):
+               pair_loss_func=None, damping=0.0, noise_amount=None, fixed_damping_amount=1.0):
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, fixed_damping_amount)
@@ -318,9 +318,28 @@ def solve_step(pair_residual_function, init_residual_function, x,
 
 @tf.function
 def solve_step_inference(pair_residual_function, init_residual_function, x,
-               pair_loss_func = None, damping=0.0, noise_amount=None):
+               pair_loss_func=None, damping=0.0, noise_amount=None):
   r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
                                   init_residual_function, x, pair_loss_func)
   dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
   dx = tf.cast(tf.stack(dx, axis=1), tf.float32)
   return x - dx
+
+@tf.function
+def solve_step_inference_polyak(pair_residual_function, init_residual_function, x, x_prev,
+        rho=0.9, pair_loss_func=None, damping=0.0, noise_amount=None):
+  r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
+                                  init_residual_function, x, pair_loss_func)
+  dx = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
+  dx = tf.cast(tf.stack(dx, axis=1), tf.float32)
+  return x - dx + rho * (x - x_prev)
+
+@tf.function
+def solve_step_inference_nesterov(pair_residual_function, init_residual_function, x, x_prev,
+        rho=0.9, pair_loss_func=None, damping=0.0, noise_amount=None):
+  u = x + rho * (x - x_prev)
+  r, J_curr, J_prev, MJ_curr, MJ_prev = make_blocks(pair_residual_function,
+                                  init_residual_function, u, pair_loss_func)
+  du = gauss_newton_solve(r, J_curr, J_prev, MJ_curr, MJ_prev, damping, noise_amount)
+  du = tf.cast(tf.stack(du, axis=1), tf.float32)
+  return u - du

@@ -156,6 +156,13 @@ class DreamerColloc(Dreamer):
     plan = gn_solver.solve_step_inference(pair_residual_func, init_residual_func, plan, damping=self._c.gn_damping)
     return plan
 
+  @tf.function
+  def opt_step_polyak(self, plan, plan_prev, init_feat, goal_feat, lam, nu, mu):
+    init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
+    pair_residual_func = lambda x_a, x_b : self.pair_residual_func_body(x_a, x_b, goal_feat, lam, nu, mu)
+    plan = gn_solver.solve_step_inference_nesterov(pair_residual_func, init_residual_func, plan, plan_prev, rho=0.9, damping=self._c.gn_damping)
+    return plan
+
   def collocation_so(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
@@ -175,6 +182,8 @@ class DreamerColloc(Dreamer):
     # Set the first state to be the observed initial state
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor + 1, var_len_step])
+    # polyak
+    plan_prev = plan
     lam = tf.ones(hor)
     nu = tf.ones(hor)
     mu = tf.ones(hor)
@@ -186,7 +195,11 @@ class DreamerColloc(Dreamer):
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
-      plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
+      plan_curr = self.opt_step_polyak(plan, plan_prev, init_feat, goal_feat, lam, nu, mu)
+      plan_prev = plan
+      plan = plan_curr
+      # plan = self.opt_step(plan, init_feat, goal_feat, lam, nu, mu)
+
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
       plans.append(plan)
@@ -871,7 +884,7 @@ def colloc_simulate(agent, config, env, save_images=True):
 
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
-  total_reward, total_sparse_reward = 0, 0
+  total_reward, total_sparse_reward = 0, None
   if config.collect_sparse_reward:
     total_sparse_reward = 0
   start = time.time()
@@ -905,7 +918,8 @@ def colloc_simulate(agent, config, env, save_images=True):
     for j in range(len(act_pred_np)):
       obs, reward, done, info = env.step(act_pred_np[j])
       total_reward += reward
-      total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
+      if config.collect_sparse_reward:
+        total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
       frames.append(obs['image'])
     obs['image'] = [obs['image']]
     # Logging
@@ -915,8 +929,8 @@ def colloc_simulate(agent, config, env, save_images=True):
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
-  goal_dist = info['goalDist'] if 'goalDist' in info else info['reachDist']
-  success = float(total_sparse_reward > 0) # info['success']
+  goal_dist = info['goalDist'] if 'goalDist' in info else 0 # info['reachDist']
+  success = float(total_sparse_reward > 0) if total_sparse_reward is not None else 0
   print(f"Planning time: {end - start}")
   print(f"Total reward: {total_reward}")
   agent.logger.log_graph('true_reward', {'rewards/true': [total_reward]})
