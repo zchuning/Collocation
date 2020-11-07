@@ -59,6 +59,9 @@ class RSSM(tools.Module):
   def get_feat(self, state):
     return tf.concat([state['stoch'], state['deter']], -1)
   
+  def get_mean_feat(self, state):
+    return tf.concat([state['mean'], state['deter']], -1)
+  
   def from_feat(self, feat):
     if feat is None: return None
     state = {'stoch': feat[..., :self._stoch_size], 'deter': feat[..., self._stoch_size:]}

@@ -112,7 +112,7 @@ class DreamerColloc(Dreamer):
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
     prior_a = self._dynamics.img_step(states_a, actions_a)
-    x_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
+    x_b_pred = self._dynamics.get_mean_feat(prior_a)[0]
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
     act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
@@ -181,7 +181,7 @@ class DreamerColloc(Dreamer):
       rew_raw = self._reward(feat_preds).mode()
       states = self._dynamics.from_feat(feat_preds[None, :-1])
       priors = self._dynamics.img_step(states, act_preds[None, :-1])
-      priors_feat = tf.squeeze(tf.concat([priors['mean'], priors['deter']], axis=-1))
+      priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
       dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]), 1)
       act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf), 1)
       # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
