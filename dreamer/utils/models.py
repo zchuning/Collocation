@@ -102,6 +102,66 @@ class RSSM(tools.Module):
     return prior
 
 
+class SSM(RSSM):
+  """ State-space model with no deterministic state """
+  
+  def __init__(self, stoch=30, layers=2, units=400, act=tf.nn.elu):
+    super().__init__()
+    self._activation = act
+    self._stoch_size = stoch
+    self._layers = layers
+    self._units = units
+    # TODO does this make sense?
+    # TODO does architecture make sense?
+    # TODO need to prevent blowing up in the recurrent network
+    
+  def initial(self, batch_size):
+    dtype = prec.global_policy().compute_dtype
+    return dict(
+      mean=tf.zeros([batch_size, self._stoch_size], dtype),
+      std=tf.zeros([batch_size, self._stoch_size], dtype),
+      stoch=tf.zeros([batch_size, self._stoch_size], dtype))
+  
+  def get_feat(self, state):
+    return state['stoch']
+  
+  def get_mean_feat(self, state):
+    return state['mean']
+  
+  def from_feat(self, feat):
+    if feat is None: return None
+    state = {'stoch': feat[..., :self._stoch_size]}
+    return state
+  
+  @tf.function
+  def obs_step(self, prev_state, prev_action, embed):
+    # p(s_{t} | s_{t-1}, a_{t-1}, o_{t})
+    prior = self.img_step(prev_state, prev_action)
+    x = tf.concat([prior['stoch'], embed, prev_action], -1)
+    x = self.get('obs_net', SigmoidPredictor,
+                 shape=(2 * self._stoch_size,), layers=self._layers, units=self._units, act=self._activation)(x)
+    mean, std = tf.split(x, 2, -1)
+    std = tf.nn.softplus(std) + 0.1
+    stoch = self.get_dist({'mean': mean, 'std': std}).sample()
+    post = {'mean': mean, 'std': std, 'stoch': stoch}
+    return post, prior
+  
+  @tf.function
+  def img_step(self, prev_state, prev_action, deterministic=False):
+    # q(s_{t} | s_{t-1}, a_{t-1})
+    x = tf.concat([prev_state['stoch'], prev_action], -1)
+    x = self.get('img_net', SigmoidPredictor,
+                 shape=(2 * self._stoch_size,), layers=self._layers, units=self._units, act=self._activation)(x)
+    mean, std = tf.split(x, 2, -1)
+    std = tf.nn.softplus(std) + 0.1
+    if deterministic:
+      stoch = self.get_dist({'mean': mean, 'std': std}).mean()
+    else:
+      stoch = self.get_dist({'mean': mean, 'std': std}).sample()
+    prior = {'mean': mean, 'std': std, 'stoch': stoch}
+    return prior
+
+
 class ConvEncoder(tools.Module):
 
   def __init__(self, depth=32, act=tf.nn.relu):
@@ -138,6 +198,24 @@ class ConvDecoder(tools.Module):
     return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
 
 
+class SigmoidPredictor(tools.Module):
+  """ A predictor with a sigmoid layer as second-to-last"""
+  def __init__(self, shape, layers, units, act=tf.nn.elu, final_act=None):
+    self._shape = shape
+    self._layers = layers
+    self._units = units
+    self._act = act
+    self._final_act = final_act
+
+  def __call__(self, features):
+    x = features
+    for index in range(self._layers - 1):
+      x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
+    x = self.get(f'h{self._layers - 1}', tfkl.Dense, self._units, tf.nn.sigmoid)(x)
+    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._final_act)(x)
+    out = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
+    return out
+  
 
 class Predictor(tools.Module):
   """ A generic MLP """

@@ -239,8 +239,10 @@ class Dreamer(tools.Module):
     cnn_act = acts[self._c.cnn_act]
     act = acts[self._c.dense_act]
     self._encode = models.ConvEncoder(self._c.cnn_depth, cnn_act)
-    self._dynamics = models.RSSM(
-        self._c.stoch_size, self._c.deter_size, self._c.deter_size)
+    if self._c.deter_size > 0:
+      self._dynamics = models.RSSM(self._c.stoch_size, self._c.deter_size, self._c.deter_size)
+    else:
+      self._dynamics = models.SSM(self._c.stoch_size, 2, self._c.num_units)
     self._decode = models.ConvDecoder(self._c.cnn_depth, cnn_act)
     self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
     if self._c.inverse_model:
