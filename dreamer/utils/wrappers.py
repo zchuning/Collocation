@@ -77,28 +77,34 @@ class DeskEnv(DreamerEnv):
     state['image'] = image
     return state
 
+
+def set_camera_params(cam, params):
+  for key, val in params.items():
+    setattr(cam, key, val)
+  
   
 class DreamerMujocoEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1):
     super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
     from envs.pointmass.pointmass_env import Pointmass
+    from envs.pointmass.pointmass_long import PointmassLong
     from envs.push.push_env import Push
     from envs.pointmass.pointmass_hard_env import PointmassHard
     # from envs.pointmass.pointmass_smart_env import Pointmass as PointmassSmart
     with self.LOCK:
+      camera_parameters = dict(azimuth=0, elevation=90, distance=2.6)
       if task == 'pm_obstacle':
         self._env = Pointmass()
+      elif 'pm_obstacle_long' in task:
+        width = float(task.split('_')[3])
+        self._env = PointmassLong(width, val='val' in task)
+        camera_parameters = dict(azimuth=0, elevation=90, distance=4.5)
       elif task == 'pm_push':
         self._env = Push()
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
-    self._offscreen.cam.azimuth = 0
-    self._offscreen.cam.elevation = 90
-    self._offscreen.cam.distance = 2.6
-    self._offscreen.cam.lookat[0] = 0
-    self._offscreen.cam.lookat[1] = 0
-    self._offscreen.cam.lookat[2] = 0
+    set_camera_params(self._offscreen.cam, camera_parameters)
 
 
 class KitchenEnv(DreamerEnv):
