@@ -138,51 +138,54 @@ class ConvDecoder(tools.Module):
     return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
 
 
-class StateEncoder(tools.Module):
-  def __init__(self, shape, layers, units, act=tf.nn.elu):
+
+class Predictor(tools.Module):
+  """ A generic MLP """
+  def __init__(self, shape, layers, units, act=tf.nn.elu, final_act=None):
     self._shape = shape
     self._layers = layers
     self._units = units
     self._act = act
+    self._final_act = final_act
 
-  def __call__(self, obs):
-    x = tf.reshape(obs['state'], (-1,) + tuple(obs['state'].shape[-1:]))
+  def __call__(self, features):
+    x = features
     for index in range(self._layers):
       x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
-    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._act)(x)
+    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._final_act)(x)
+    out = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
+    return out
+  
+
+class StateEncoder(Predictor):
+  def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu):
+    super().__init__(shape, layers, units, act, act)
+    
+  def __call__(self, obs):
+    # Batch apply
+    # TODO try removing the next line
+    x = tf.reshape(obs['state'], (-1,) + tuple(obs['state'].shape[-1:]))
+    x = super().__call__(x)
     x = tf.reshape(x, tf.concat([tf.shape(obs['state'])[:-1], self._shape], 0))
     return x
 
-class StateDecoder(tools.Module):
-  def __init__(self, shape, layers, units, act=tf.nn.elu):
-    self._shape = shape
-    self._layers = layers
-    self._units = units
-    self._act = act
 
+class StateDecoder(Predictor):
+  def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu):
+    super().__init__(shape, layers, units, act, act)
+    
   def __call__(self, features):
-    x = features
-    for index in range(self._layers):
-      x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
-    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape), self._act)(x)
-    mean = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
+    mean = super().__call__(features)
     return tfd.Independent(tfd.Normal(mean, 1), len(self._shape))
 
-class DenseDecoder(tools.Module):
 
+class DenseDecoder(Predictor):
   def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu):
-    self._shape = shape
-    self._layers = layers
-    self._units = units
+    super().__init__(shape, layers, units, act)
     self._dist = dist
-    self._act = act
 
   def __call__(self, features):
-    x = features
-    for index in range(self._layers):
-      x = self.get(f'h{index}', tfkl.Dense, self._units, self._act)(x)
-    x = self.get(f'hout', tfkl.Dense, np.prod(self._shape))(x)
-    x = tf.reshape(x, tf.concat([tf.shape(features)[:-1], self._shape], 0))
+    x = super().__call__(features)
     if self._dist == 'normal':
       return tfd.Independent(tfd.Normal(x, 1), len(self._shape))
     if self._dist == 'binary':
