@@ -193,16 +193,16 @@ class DreamerColloc(Dreamer):
       metrics.dynamics_coeff.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
       metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
-      # Record model sample rewards
-      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
+      # Record model rewards
+      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
       model_rew = self._reward(model_feats).mode()
       metrics.model_rewards.append(tf.reduce_sum(model_rew))
       
       if log_extras:
-        # Record model rewards
-        model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+        # Record model sample rewards
+        model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
         model_rew = self._reward(model_feats).mode()
-        metrics.model_mean_rewards.append(tf.reduce_sum(model_rew))
+        metrics.model_sample_rewards.append(tf.reduce_sum(model_rew))
         
         # Record residuals
         _, dyn_res, act_res, rew_res, dyn_resw, act_resw, rew_resw = \
