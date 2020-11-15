@@ -111,9 +111,6 @@ class SSM(RSSM):
     self._stoch_size = stoch
     self._layers = layers
     self._units = units
-    # TODO does this make sense?
-    # TODO does architecture make sense?
-    # TODO need to prevent blowing up in the recurrent network
     
   def initial(self, batch_size):
     dtype = prec.global_policy().compute_dtype
@@ -269,6 +266,45 @@ class DenseDecoder(Predictor):
     if self._dist == 'binary':
       return tfd.Independent(tfd.Bernoulli(x), len(self._shape))
     raise NotImplementedError(self._dist)
+
+
+class SumOfSquaresDecoder(tools.Module):
+  """ A class that uses sum-of-squares to predict the reward. Necessary to use in a gauss-newton optimizer as a
+   residual """
+  def __init__(self, shape, layers, units, dist='normal', act=tf.nn.elu, final_act=None):
+    self._shape = shape
+    self._layers = layers
+    self._units = units
+    self._act = act
+    self._final_act = final_act
+    self._dist = dist
+    
+    # Bias
+    self.a = tf.Variable(1.)
+    self.b = tf.Variable(1.)
+
+  def __call__(self, features):
+    res = self.get_residual(features)
+    # TODO remove
+    bias = self.get_bias()
+    # tf.print(bias)
+    # r = - Σ res^2
+    x = bias - tf.reduce_sum(res ** 2, -1)
+    
+    if self._dist == 'normal':
+      return tfd.Independent(tfd.Normal(x, 1), len(self._shape))
+    if self._dist == 'binary':
+      return tfd.Independent(tfd.Bernoulli(x), len(self._shape))
+    raise NotImplementedError(self._dist)
+  
+  def get_bias(self):
+    # The multiplicative interaction is needed for faster convergence with gradient descent
+    return self.a * self.b
+    # return tf.exp(self.a)
+    # return 100000
+  
+  def get_residual(self, features):
+    return self.get('net', Predictor, (20,), self._layers, self._units, self._act)(features)
 
 
 class ActionDecoder(tools.Module):

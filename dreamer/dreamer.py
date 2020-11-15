@@ -66,6 +66,7 @@ def define_config():
   config.inverse_model = False
   config.state_regressor = False
   config.save_every = 100000
+  config.ssq_reward = False
   # Training.
   config.batch_size = 50
   config.batch_length = 50
@@ -244,7 +245,10 @@ class Dreamer(tools.Module):
     else:
       self._dynamics = models.SSM(self._c.stoch_size, 2, self._c.num_units)
     self._decode = models.ConvDecoder(self._c.cnn_depth, cnn_act)
-    self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
+    if self._c.ssq_reward:
+      self._reward = models.SumOfSquaresDecoder((), 2, self._c.num_units, act=act)
+    else:
+      self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
     if self._c.inverse_model:
       self._inverse = models.ActionDecoder(
         self._actdim, 4, self._c.num_units, self._c.action_dist,

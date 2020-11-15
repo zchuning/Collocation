@@ -116,8 +116,11 @@ class DreamerColloc(Dreamer):
     dyn_res = x_b[:, :-self._actdim] - x_b_pred
     act_res = tf.clip_by_value(tf.math.abs(x_a[:, -self._actdim:]) - 1, 0, np.inf)
     # act_res = tf.clip_by_value(tf.square(x_a[:, -self._actdim:]) - 1, 0, np.inf)
-    rew = self._reward(x_b[:, :-self._actdim]).mode()
-    rew_res = tf.math.softplus(-rew) # 1.0 - tf.math.sigmoid(rew) # tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) # Softplus
+    if self._c.ssq_reward:
+      rew_res = self._reward.get_residual(x_b[:, :-self._actdim])
+    else:
+      rew = self._reward(x_b[:, :-self._actdim]).mode()
+      rew_res = tf.math.softplus(-rew) # 1.0 - tf.math.sigmoid(rew) # tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) # Softplus
     # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
     # rew_res = rew_c * (1.0 / (rew + 10000))[:, None] # Inverse
     # rew_res = rew_c * tf.sqrt(-tf.clip_by_value(rew-100000, -np.inf, 0))[:, None] # shifted reward
@@ -240,6 +243,8 @@ class DreamerColloc(Dreamer):
         #   mu = mu * self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
+    if tf.reduce_any(tf.math.is_nan(act_preds)):
+      act_preds = tf.zeros_like(act_preds)
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:
       print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
