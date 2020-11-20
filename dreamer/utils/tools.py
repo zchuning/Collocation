@@ -59,9 +59,17 @@ def graph_summary(writer, fn, *args):
       fn(*args)
   return tf.numpy_function(inner, args, [])
 
+def get_string(string):
+  if isinstance(string, str):
+    return string
+  elif isinstance(string, bytes):
+    return string.decode('utf8')
+  elif isinstance(string, np.ndarray):
+    return str(string)
+    # return np.char.decode(string)
 
 def video_summary(name, video, step=None, fps=20):
-  name = name if isinstance(name, str) else name.decode('utf-8')
+  name = get_string(name)
   if np.issubdtype(video.dtype, np.floating):
     video = np.clip(255 * video, 0, 255).astype(np.uint8)
   if len(video.shape) == 4:
@@ -81,7 +89,7 @@ def video_summary(name, video, step=None, fps=20):
     
 
 def image_summary(name, image, step=None):
-  name = name if isinstance(name, str) else name.decode('utf-8')
+  name = get_string(name)
   if np.issubdtype(image.dtype, np.floating):
     image = np.clip(255 * image, 0, 255).astype(np.uint8)
   if len(image.shape) == 4:

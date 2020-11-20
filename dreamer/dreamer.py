@@ -224,14 +224,13 @@ class Dreamer(tools.Module):
     actor_norm = self._actor_opt(actor_tape, actor_loss)
     value_norm = self._value_opt(value_tape, value_loss)
 
-    if tf.distribute.get_replica_context().replica_id_in_sync_group == 0:
-      if self._c.log_scalars:
-        self._scalar_summaries(
-            data, feat, prior_dist, post_dist, likes, div,
-            model_loss, value_loss, actor_loss, model_norm, value_norm,
-            actor_norm)
-      if tf.equal(log_images, True):
-        self._image_summaries(data, embed, image_pred)
+    if self._c.log_scalars:
+      self._scalar_summaries(
+          data, feat, prior_dist, post_dist, likes, div,
+          model_loss, value_loss, actor_loss, model_norm, value_norm,
+          actor_norm)
+    if tf.equal(log_images, True):
+      self._image_summaries(data, embed, image_pred)
 
   def _build_model(self):
     acts = dict(
