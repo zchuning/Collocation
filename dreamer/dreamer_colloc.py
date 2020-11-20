@@ -169,6 +169,7 @@ class DreamerColloc(Dreamer):
     # Run second-order solver
     plans = [plan]
     metrics = AttrDefaultDict(list)
+    # Can use tf.range for TF control flow here
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
       # with timing("Single Gauss-Newton step time: "):
@@ -243,7 +244,7 @@ class DreamerColloc(Dreamer):
         #   mu = mu * self._c.lam_step
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
-    if tf.reduce_any(tf.math.is_nan(act_preds)):
+    if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
       act_preds = tf.zeros_like(act_preds)
     feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose:

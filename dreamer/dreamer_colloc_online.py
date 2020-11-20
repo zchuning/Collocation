@@ -48,9 +48,14 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model_mean', img_pred + 0.5)
 
-  # @tf.function
   def plan(self, feat, log_images):
     # TODO speed this up
+    # - This can be sped up by compiling the for loop, but the speed up is almost negligible
+    # Additionaly, the compilation is very slow for long for loops.
+    # Long for loops can be compiled fast by making sure they use TF control flow (tf.range), however
+    # TF control flow is quite limited an unsuitable for development
+    # - A 2x speed up can be achieved by removing the baggage from collocation_so. This is not large enough to be worth it
+    # - Debug the optimization speed?
     if self._c.planning_task == "colloc_second_order":
       act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
       for k, v in info['metrics'].items():
