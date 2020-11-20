@@ -123,9 +123,11 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       for k, v in info['metrics'].items():
         self._metrics[f'opt_{k}'].update_state(v)
     elif self._c.planning_task == "shooting_cem":
-      act_pred, img_pred, feat_pred = self.shooting_cem(None, None, init_feat=feat, verbose=False)
+      from planners.shooting_cem import ShootingCEMAgent
+      act_pred, img_pred, feat_pred = ShootingCEMAgent.shooting_cem(self, None, None, init_feat=feat, verbose=False)
     elif self._c.planning_task == "shooting_gd":
-      act_pred, img_pred, feat_pred = self.shooting_gd(None, None, init_feat=feat, verbose=False)
+      from planners.shooting_gd import ShootingGDAgent
+      act_pred, img_pred, feat_pred = ShootingGDAgent.shooting_gd(self, None, None, init_feat=feat, verbose=False)
 
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
