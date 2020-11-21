@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow.compat.v2 as tf
 tf.enable_v2_behavior()
 
+FLOAT = tf.float64
 
 # Factorize block tridiagonal symmetric positive definite matrix.
 # See: https://software.intel.com/en-us/node/531896
@@ -74,7 +75,7 @@ def gauss_newton_matrix(J_curr, J_prev, damping = 0.0):
   dim_x = J_curr[0].shape[-1]
   D = [None] * T
   B = [None] * (T-1)
-  I = damping * tf.eye(dim_x, batch_shape=[1], dtype=tf.float64)
+  I = damping * tf.eye(dim_x, batch_shape=[1], dtype=FLOAT)
   # fill main diagonal
   for t in range(T-1):
     D[t] = I + 2.0 * (tf.matmul(J_curr[t], J_curr[t], transpose_a=True) + \
@@ -244,12 +245,12 @@ def make_blocks(pair_residual_func, init_residual_func, x,
   dim_r = R_pair.shape[-1]
   R_pair = tf.reshape(R_pair, [-1, T - 1, dim_r])
   J_pair = tf.reshape(J_pair, [-1, T - 1, dim_r, 2, dim_x])
-  R_pair = tf.cast(R_pair, tf.float64)
-  J_pair = tf.cast(J_pair, tf.float64)
+  R_pair = tf.cast(R_pair, FLOAT)
+  J_pair = tf.cast(J_pair, FLOAT)
   # initial condition residuals and Jacobians
   R_init, J_init = jacobian(init_residual_func, x[:, 0, :])
-  R_init = tf.cast(R_init, tf.float64)
-  J_init = tf.cast(J_init, tf.float64)
+  R_init = tf.cast(R_init, FLOAT)
+  J_init = tf.cast(J_init, FLOAT)
 
   # incorporate loss derivaties into residuals and Jacobians
   if pair_loss_func:
