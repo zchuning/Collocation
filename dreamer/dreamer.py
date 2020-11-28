@@ -50,6 +50,9 @@ def define_config():
   config.use_sparse_reward = False
   config.state_size = 9
   config.img_sz = 64
+  config.rand_init_goal = False
+  config.rand_init_hand = False
+  config.rand_init_obj = False
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -428,7 +431,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       tools.video_summary(f'sim/{prefix}/video', episode['image'][None], step)
       if 'image_goal' in episode:
         tools.image_summary(f'sim/{prefix}/goal', episode['image_goal'][[0]], step)
-        
+
 
 
 def make_env(config, writer, prefix, datadir, store):
@@ -456,15 +459,16 @@ def make_bare_env(config):
       life_done=True, sticky_actions=True)
     env = wrappers.OneHotAction(env)
   elif suite == "mw":
-    env = wrappers.MetaWorld(task, config.action_repeat)
+    env = wrappers.MetaWorld(task, config.action_repeat, config.rand_init_goal,
+        config.rand_init_hand, config.rand_init_obj)
+  elif suite == "mwsparse":
+    env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "mtmw":
     env = wrappers.MultiTaskMetaWorld(task, config.action_repeat)
   elif suite == "muw":
     env = wrappers.MultiWorld(task, config.action_repeat)
   elif suite == "mtmuw":
     env = wrappers.MultiWorld(task, config.action_repeat, randomize_goals=True)
-  elif suite == "mwsparse":
-    env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "colloc":
     env = wrappers.DreamerMujocoEnv(task, config.action_repeat)
   elif suite == "d4rl":
@@ -487,7 +491,7 @@ def setup(config, logdir):
   logdir.mkdir(parents=True, exist_ok=True)
   print('Logdir', logdir)
   datadir = logdir / 'episodes'
-  
+
   # Save run parameters
   dl_infrastructure.save_cmd(logdir)
   dl_infrastructure.save_git(logdir)

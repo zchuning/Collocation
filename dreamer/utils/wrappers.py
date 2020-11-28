@@ -70,7 +70,7 @@ class MultiWorld(DreamerEnv):
       task = 'SawyerDoorHookResetFreeEnv-v1'
     elif task == 'pick':
       task = 'SawyerPickupEnvYZEasy-v0'
-      
+
     import multiworld
     from multiworld.core.image_env import ImageEnv
     import multiworld.envs.mujoco.cameras as cam
@@ -133,7 +133,7 @@ class MultiWorld(DreamerEnv):
     goal = self._env.get_goal()['image_desired_goal']
     goal = goal.reshape(3, self._width, self._width).transpose()[::-1, :, :]
     return {'image': goal}
-  
+
 
 class DeskEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1, width=64):
@@ -156,8 +156,8 @@ class DeskEnv(DreamerEnv):
 def set_camera_params(cam, params):
   for key, val in params.items():
     setattr(cam, key, val)
-  
-  
+
+
 class DreamerMujocoEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1):
     super().__init__(action_repeat)
@@ -206,7 +206,7 @@ class KitchenEnv(DreamerEnv):
 try:
   import d4rl
   from d4rl.kitchen.kitchen_envs import KitchenBase
-  
+
   class KitchenMicrowave(KitchenBase):
       TASK_ELEMENTS = ['microwave']
 
@@ -217,7 +217,7 @@ except:
 
 
 class MetaWorld(DreamerEnv):
-  def __init__(self, name, action_repeat):
+  def __init__(self, name, action_repeat, rand_init_goal=False, rand_init_hand=False, rand_init_obj=False):
     super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
@@ -231,6 +231,9 @@ class MetaWorld(DreamerEnv):
         self._env = getattr(sawyer, task)()
 
     self._action_repeat = action_repeat
+    self._rand_init_goal = rand_init_goal
+    self._rand_init_hand = rand_init_hand
+    self._rand_init_obj = rand_init_obj
     self._width = 64
     self._size = (self._width, self._width)
 
@@ -249,13 +252,42 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 1.1
       self._offscreen.cam.lookat[1] = 1.1
       self._offscreen.cam.lookat[2] = -0.1
-      
+
     self.rendered_goal = False
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
-    # self._env.hand_init_pos = np.array([0, .6, .1])
     self.rendered_goal = False
+    # self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
+    # self._env.hand_init_pos = np.array([0., 0.55, 0.05])
+    if self._rand_init_goal:
+      self._env.goal = np.random.uniform(
+        self._env.goal_space.low,
+        self._env.goal_space.high,
+        size=(self._env.goal_space.low.size)
+      )
+    if self._rand_init_obj:
+      if 'obj_init_pos' in self._env.init_config:
+        # self._env.init_config['obj_init_pos'] = np.random.uniform(
+        #   self._env.observation_space.low[3:6],
+        #   self._env.observation_space.high[3:6],
+        #   size=(self._env.observation_space.low[3:6].size)
+        # )
+        obj_init_pos = np.random.uniform(
+          (-0.1, 0.6, 0.02),
+          (0.1, 0.9, 0.02),
+          size=(3)
+        )
+        self._env.init_config['obj_init_pos'] = obj_init_pos
+        # Initialize hand above object
+        self._env.hand_init_pos = obj_init_pos
+        self._env.hand_init_pos[2] = 0.05 # np.random.uniform(0.05, 0.2) # 0.05
+    if self._rand_init_hand:
+      self._env.hand_init_pos = np.random.uniform(
+        self._env.hand_low,
+        self._env.hand_high,
+        size=(self._env.hand_low.size)
+      )
     return super().reset()
 
   def step(self, action):
@@ -271,7 +303,7 @@ class MetaWorld(DreamerEnv):
   def render_goal(self):
     if self.rendered_goal:
       return self.rendered_goal_obj
-    
+
     obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
     self._env.init_config['obj_init_pos'] = self._env.goal
     self._env.obj_init_pos = self._env.goal
@@ -284,7 +316,7 @@ class MetaWorld(DreamerEnv):
     self._env.init_config['obj_init_pos'] = obj_init_pos_temp
     self._env.obj_init_pos = self._env.init_config['obj_init_pos']
     self._env.reset()
-    
+
     self.rendered_goal = True
     self.rendered_goal_obj = goal_obs
     return goal_obs
@@ -293,7 +325,7 @@ class MetaWorld(DreamerEnv):
 class MultiTaskMetaWorld(MetaWorld):
   def __init__(self, name, action_repeat, large_goal_space=True, hide_goal_markers=True):
     super().__init__(name, action_repeat)
-  
+
     # TODO this is for reaching, add pushing
     if hide_goal_markers:
       # Because of some issues, the MW environment resets the markers manually every step
@@ -305,7 +337,7 @@ class MultiTaskMetaWorld(MetaWorld):
     else:
       self._goal_low = np.array(self._env.goal_space.low)
       self._goal_high = np.array(self._env.goal_space.high)
-    
+
   def reset(self):
     # TODO do I need this lock?
     # with self.LOCK:
@@ -316,24 +348,24 @@ class MultiTaskMetaWorld(MetaWorld):
     )
     obs = super().reset()
     return obs
-  
+
   def hide_markers(self):
     self._env.data.site_xpos[self._env.model.site_name2id('goal_reach'), 2] = (-1000)
     self._env.data.site_xpos[self._env.model.site_name2id('goal_push'), 2] = (-1000)
     self._env.data.site_xpos[self._env.model.site_name2id('goal_pick_place'), 2] = (-1000)
-  
+
   def _get_obs(self, state):
     obs = super()._get_obs(state)
     obs['image_goal'] = self.render_goal()['image']
     return obs
-  
+
 
 class MetaWorldVis(MetaWorld):
   def __init__(self, name, action_repeat, width):
     super().__init__(name, action_repeat)
     self._width = width
     self._size = (self._width, self._width)
-  
+
   def render_state(self, state):
     assert (len(state.shape) == 1)
     # Save init configs
@@ -350,7 +382,7 @@ class MetaWorldVis(MetaWorld):
     self._env.init_config['obj_init_pos'] = obj_init_pos
     self._env.reset()
     return obs['image']
-  
+
   def render_states(self, states):
     assert (len(states.shape) == 2)
     imgs = []
