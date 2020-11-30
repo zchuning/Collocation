@@ -312,7 +312,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     elif pt == 'colloc_second_order':
       act_pred, img_pred, feat_pred, _ = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=True)
     elif pt == 'colloc_second_order_goal':
-      act_pred, img_pred, feat_pred = agent.collocation_so_goal_1(obs, goal_obs, save_images, i)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, i)
     elif pt == 'colloc_second_order_goal_boundary':
       act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal_boundary(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':
