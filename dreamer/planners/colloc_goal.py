@@ -77,11 +77,12 @@ class CollocGoalAgent(DreamerColloc):
       img_preds = None
     return act_plan, img_preds, feat_plan
 
-  def collocation_so_goal_1(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
+  def collocation_so_goal_boundary(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True):
+    # Using final_residual_func to make sure the final state matches the goal
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
-    damping = 1e-3
+    act_threshold = self._c.act_threshold
 
     if init_feat is None:
       init_feat, _ = self.get_init_feat(obs)
@@ -89,8 +90,9 @@ class CollocGoalAgent(DreamerColloc):
     plan = tf.random.normal((hor * var_len_step,), dtype=self._float)
     plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
     plan = tf.reshape(plan, [1, hor, var_len_step])
+    nu = tf.ones(hor - 1)
 
-    def pair_residual_func(x_a, x_b):
+    def pair_residual_func(x_a, x_b, nu=np.ones(1, np.float32)):
       actions_a = x_a[:, feat_size:]
       feats_a = x_a[:, :feat_size]
       states_a = self._dynamics.from_feat(feats_a[None])
@@ -98,19 +100,26 @@ class CollocGoalAgent(DreamerColloc):
       feats_b_pred = tf.concat([prior_a['mean'], prior_a['deter']], -1)[0]
       dyn_res = x_b[:, :feat_size] - feats_b_pred
       act_res = tf.clip_by_value(tf.square(actions_a) - 1, 0, np.inf)
-      return tf.concat([dyn_res, act_res], 1)
+      act_c = tf.sqrt(nu)[:, None] * self._c.act_res_wt
+      return tf.concat([dyn_res, act_c * act_res], 1)
 
-    init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
-    # final_residual_func = lambda x: (x[:, :-self._actdim] - goal_feat) * 1000
-    final_residual_func = lambda x_a: pair_residual_func(x_a, goal_feat)
-    # final_residual_func = lambda x: tf.zeros((1,0))
-
+    @tf.function
+    def opt_step(plan, nu):
+      # final_residual_func = lambda x: (x[:, :-self._actdim] - goal_feat) * 1000
+      # final_residual_func = lambda x: tf.zeros((1,0))
+      init_residual_func = lambda x: (x[:, :-self._actdim] - init_feat) * 1000
+      final_residual_func = lambda x_a: pair_residual_func(x_a, goal_feat)
+      pair_residual_func_ = lambda x_a, x_b: pair_residual_func(x_a, x_b, nu)
+      plan = gn_solver_goal.solve_step_inference(
+        pair_residual_func_, init_residual_func, final_residual_func, plan, damping=self._c.gn_damping)
+      return plan
+    
     # Run second-order solver
-    dyn_losses, rewards, act_losses = [], [], []
+    metrics = AttrDefaultDict(list)
     for i in range(self._c.gd_steps):
       # Run Gauss-Newton step
-      with timing("Single Gauss-Newton step time: "):
-        plan = gn_solver_goal.solve_step_inference(pair_residual_func, init_residual_func, final_residual_func, plan, damping=damping)
+      # with timing("Single Gauss-Newton step time: "):
+      plan = opt_step(plan, nu)
       # Compute and record dynamics loss and reward
       feat_plan, act_plan = tf.split(plan[0], [feat_size, self._actdim], 1)
       reward = tf.reduce_sum(self._reward(feat_plan).mode())
@@ -119,28 +128,30 @@ class CollocGoalAgent(DreamerColloc):
       next_feats = tf.squeeze(tf.concat([next_states['mean'], next_states['deter']], axis=-1))
       dyn_loss = tf.reduce_sum(tf.square(next_feats - feat_plan[1:]))
       act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_plan) - 1, 0, np.inf))
-      dyn_losses.append(dyn_loss)
-      rewards.append(reward)
-      act_losses.append(act_loss)
+      metrics.dynamics.append(dyn_loss)
+      metrics.rewards.append(reward)
+      metrics.action_violation.append(act_loss)
 
-    import pdb; pdb.set_trace()
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        nu_delta = nu * 0.1 * tf.math.log((act_loss + 0.1 * act_threshold) / act_threshold) / tf.math.log(10.0)
+        nu = nu + nu_delta  # * self._c.nu_lr
+
     act_plan = act_plan[:min(hor, self._c.mpc_steps)]
     feat_plan = feat_plan[1:min(hor, self._c.mpc_steps) + 1]
     if verbose:
-      print(f"Final average dynamics loss: {dyn_losses[-1] / hor}")
-      print(f"Final average action violation: {act_losses[-1] / hor}")
-      print(f"Final average reward: {rewards[-1] / hor}")
+      print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
+      print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
+      print(f"Final average reward: {metrics.rewards[-1] / hor}")
     if save_images:
       img_preds = self._decode(feat_plan).mode()
-      self.logger.log_graph('losses', {f'rewards/{step}': rewards,
-                                       f'dynamics/{step}': dyn_losses,
-                                       f'action_violation/{step}': act_losses})
-      self.visualize_colloc(img_preds, act_plan, init_feat)
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in metrics.items()})
+      self.visualize_colloc(img_preds, act_plan, init_feat, step)
     else:
       img_preds = None
-    return act_plan, img_preds, feat_plan
+    return act_plan, img_preds, feat_plan, None
 
-  def collocation_goal(self, init, goal, optim):
+  def collocation_goal_gd(self, init, goal, optim):
+    #
     horizon = self._c.planning_horizon
     mpc_steps = self._c.mpc_steps
     feat_size = self._c.stoch_size + self._c.deter_size
