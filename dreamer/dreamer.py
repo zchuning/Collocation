@@ -65,6 +65,7 @@ def define_config():
   config.weight_decay_pattern = r'.*'
   config.inverse_model = False
   config.state_regressor = False
+  config.embed_regressor = False
   config.save_every = 100000
   config.ssq_reward = False
   # Training.
@@ -189,6 +190,9 @@ class Dreamer(tools.Module):
       if self._c.state_regressor:
         states_pred = self._state(tf.stop_gradient(feat))
         likes.state_regressor = tf.reduce_mean(states_pred.log_prob(data['state']))
+      if self._c.embed_regressor:
+        embed_pred = self._embed(tf.stop_gradient(feat))
+        likes.embed_regressor = tf.reduce_mean(embed_pred.log_prob(tf.stop_gradient(embed)))
       if self._c.pcont:
         pcont_pred = self._pcont(feat)
         pcont_target = self._c.discount * data['discount']
@@ -254,6 +258,9 @@ class Dreamer(tools.Module):
         init_std=self._c.action_init_std, act=act)
     if self._c.state_regressor:
       self._state = models.DenseDecoder((self._c.state_size,), 2, self._c.num_units, act=act)
+    if self._c.embed_regressor:
+      embed_size = self._c.cnn_depth * 32
+      self._embed = models.DenseDecoder((embed_size,), 2, self._c.num_units, act=act)
     if self._c.pcont:
       self._pcont = models.DenseDecoder(
           (), 3, self._c.num_units, 'binary', act=act)
@@ -266,6 +273,8 @@ class Dreamer(tools.Module):
       model_modules.append(self._inverse)
     if self._c.state_regressor:
       model_modules.append(self._state)
+    if self._c.embed_regressor:
+      model_modules.append(self._embed)
     if self._c.pcont:
       model_modules.append(self._pcont)
     Optimizer = functools.partial(
