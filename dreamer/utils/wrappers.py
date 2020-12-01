@@ -144,8 +144,10 @@ class MetaWorld(DreamerEnv):
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
     domain, task = name.split('_', 1)
+    closeup = 'closeup' in task
+    task = task.replace('_closeup', '')
     with self.LOCK:
-      if task == 'SawyerReachEnv':
+      if 'SawyerReachEnv' in task:
         self._env = sawyer.SawyerReachPushPickPlaceEnv(task_type='reach')
       else:
         self._env = getattr(sawyer, task)()
@@ -155,12 +157,20 @@ class MetaWorld(DreamerEnv):
     self._size = (self._width, self._width)
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
-    self._offscreen.cam.azimuth = 205
-    self._offscreen.cam.elevation = -165
-    self._offscreen.cam.distance = 2.6
-    self._offscreen.cam.lookat[0] = 1.1
-    self._offscreen.cam.lookat[1] = 1.1
-    self._offscreen.cam.lookat[2] = -0.1
+    if closeup:
+      self._offscreen.cam.azimuth = 155
+      self._offscreen.cam.elevation = -150
+      self._offscreen.cam.distance = 0.9
+      self._offscreen.cam.lookat[0] = 0.3
+      self._offscreen.cam.lookat[1] = 0.55
+      self._offscreen.cam.lookat[2] = -0.1
+    else:
+      self._offscreen.cam.azimuth = 205
+      self._offscreen.cam.elevation = -165
+      self._offscreen.cam.distance = 2.6
+      self._offscreen.cam.lookat[0] = 1.1
+      self._offscreen.cam.lookat[1] = 1.1
+      self._offscreen.cam.lookat[2] = -0.1
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
