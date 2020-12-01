@@ -91,6 +91,7 @@ def define_config():
   config.expl_decay = 0.0
   config.expl_min = 0.0
   config.metrics_fix = False
+  config.metrics_fix1 = False
   return config
 
 
@@ -118,7 +119,8 @@ class Dreamer(tools.Module):
       self._metrics['opt_action_violation']
       self._metrics['opt_dynamics_coeff']
       self._metrics['opt_action_coeff']
-      self._metrics['opt_model_rewards']
+      if not self._c.metrics_fix1:
+        self._metrics['opt_model_rewards']
     self._float = prec.global_policy().compute_dtype
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
