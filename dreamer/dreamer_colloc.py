@@ -33,6 +33,7 @@ def define_config():
   # Planning
   config.planning_task = 'colloc_second_order'
   config.planning_horizon = 10
+  # Optimizer parameters
   config.mpc_steps = 10
   config.cem_steps = 60
   config.cem_batch_size = 10000
@@ -42,11 +43,13 @@ def define_config():
   config.gd_steps = 2000
   config.gd_lr = 0.05
   config.gn_damping = 1e-3
+  # Lagrange multipliers
   config.lam_int = 1
   config.lam_lr = 1
   config.lam_step = 10
   config.nu_lr = 100
   config.mu_int = -1
+  # Loss weights
   config.dyn_threshold = 1e-1
   config.act_threshold = 1e-1
   config.rew_threshold = 1e-8
@@ -57,12 +60,15 @@ def define_config():
   config.rew_res_wt = 1
   config.dyn_res_wt = 1
   config.act_res_wt = 1
+  config.hyst_ratio = 0.1
+  # Logging
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
   config.eval_tasks = 1
+  # Goal-conditioned
   config.goal_based = False
-  config.hyst_ratio = 0.1
+  config.goal_distance = 'latent'
   return config
 
 

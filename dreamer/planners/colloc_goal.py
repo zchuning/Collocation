@@ -12,14 +12,18 @@ from blox.utils import timing
 class CollocGoalAgent(DreamerColloc):
   def compute_rewards(self, feats, goal):
     """ Defines what reward is used for collocation """
-    # TODO add other rewards
-    # TODO fix the below
-    return -tf.reduce_sum((feats - goal) ** 2)
+    if self._c.goal_distance == 'latent':
+      return -tf.reduce_sum((feats - goal) ** 2)
+    elif self._c.goal_distance == 'embed':
+      return -tf.reduce_sum((self._embed(feats).mode() - self._embed(goal).mode()) ** 2)
   
   def reward_residual(self, feats, goal):
     """ Defines what reward residual is used for collocation """
-    # TODO add other rewards
-    return feats - goal
+    if self._c.goal_distance == 'latent':
+      return feats - goal
+    elif self._c.goal_distance == 'embed':
+      return self._embed(feats).mode() - self._embed(goal).mode()
+      
   
   def pair_residual_func_body(self, x_a, x_b, goal,
                               lam=np.ones(1, np.float32), nu=np.ones(1, np.float32), mu=np.ones(1, np.float32)):
