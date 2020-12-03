@@ -278,6 +278,17 @@ def make_env(config):
   env = wrappers.RewardObs(env)
   return env
 
+def get_goal(env, config):
+  # Obtain goal observation for goal-based collocation
+  is_goal_based = 'goal' in config.planning_task or config.goal_based
+  if is_goal_based:
+    goal_obs = env.render_goal()
+    imageio.imwrite('goal_img.jpg', goal_obs['image'])
+    goal_obs['image'] = [goal_obs['image']]
+  else:
+    goal_obs = None
+  return goal_obs
+
 
 def colloc_simulate(agent, config, env, save_images=True):
   """ Run planning loop """
@@ -286,14 +297,7 @@ def colloc_simulate(agent, config, env, save_images=True):
   actspace = env.action_space
   obs = env.reset()
   obs['image'] = [obs['image']]
-  # Obtain goal observation for goal-based collocation
-  is_goal_based = 'goal' in pt or config.goal_based
-  if is_goal_based:
-    goal_obs = env.render_goal()
-    imageio.imwrite('goal_img.jpg', goal_obs['image'])
-    goal_obs['image'] = [goal_obs['image']]
-  else:
-    goal_obs = None
+  goal_obs = get_goal(env, config)
 
   num_iter = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
@@ -312,7 +316,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     elif pt == 'colloc_second_order':
       act_pred, img_pred, feat_pred, _ = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=True)
     elif pt == 'colloc_second_order_goal':
-      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, i)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, i, log_extras=True)
     elif pt == 'colloc_second_order_goal_boundary':
       act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal_boundary(obs, goal_obs, save_images, i)
     elif pt == 'colloc_gd_goal':
@@ -342,7 +346,7 @@ def colloc_simulate(agent, config, env, save_images=True):
       agent.logger.log_video(f"plan/{i}", img_pred.numpy())
     agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
   end = time.time()
-  if 'goalDist' in info:
+  if 'goalDist' in info and info['goalDist'] is not None:
     goal_dist = info['goalDist']
   elif 'reachDist' in info:
     goal_dist = info['reachDist']
@@ -363,6 +367,8 @@ def colloc_simulate(agent, config, env, save_images=True):
       # TODO mark beginning in the gif
       agent.logger.log_video("plan/full", img_preds)
     agent.logger.log_video("execution/full", frames)
+    if goal_obs is not None:
+      agent.logger.log_image("goal", goal_obs['image'][0])
   return total_reward, total_sparse_reward, success, goal_dist
 
 

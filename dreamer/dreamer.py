@@ -125,7 +125,7 @@ class Dreamer(tools.Module):
     self._dataset = iter(load_dataset(datadir, self._c))
     self._build_model()
 
-  def __call__(self, obs, reset, state=None, training=True):
+  def __call__(self, obs, reset, state=None, training=True, goal=None):
     step = self._step.numpy().item()
     tf.summary.experimental.set_step(step)
     if state is not None and reset.any():
@@ -140,13 +140,13 @@ class Dreamer(tools.Module):
         self.train(next(self._dataset), log_images)
       if log:
         self._write_summaries()
-    action, state = self.policy(obs, state, training)
+    action, state = self.policy(obs, state, training, goal=goal)
     if training:
       self._step.assign_add(len(reset) * self._c.action_repeat)
     return action, state
 
   @tf.function
-  def policy(self, obs, state, training):
+  def policy(self, obs, state, training, goal=None):
     feat, latent = self.get_init_feat(obs, state)
     if training:
       action = self._actor(feat).sample()

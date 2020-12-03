@@ -48,30 +48,39 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     img_pred = self._decode(tf.concat((init_feat[None], feat_pred), 1)).mode()
     tools.graph_summary(self._writer, tools.video_summary, 'model_mean', img_pred + 0.5)
 
-  def plan(self, feat, log_images):
+  def plan(self, feat, log_images, goal=None):
     # TODO speed this up
     # - This can be sped up by compiling the for loop, but the speed up is almost negligible
     # Additionaly, the compilation is very slow for long for loops.
     # Long for loops can be compiled fast by making sure they use TF control flow (tf.range), however
-    # TF control flow is quite limited an unsuitable for development
+    # TF control flow is quite limited and unsuitable for development
     # - A 2x speed up can be achieved by removing the baggage from collocation_so. This is not large enough to be worth it
-    # - Debug the optimization speed?
+    # - Otherwise, the speed is determined by the decomposition in the GN solver. That operation takes about 25% of the
+    # time now, making it unlikely this can be sped up
+    info = None
     if self._c.planning_task == "colloc_second_order":
       act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
-      for k, v in info['metrics'].items():
-        self._metrics[f'opt_{k}'].update_state(v)
     elif self._c.planning_task == "shooting_cem":
       from planners.shooting_cem import ShootingCEMAgent
       act_pred, img_pred, feat_pred = ShootingCEMAgent.shooting_cem(self, None, None, init_feat=feat, verbose=False)
     elif self._c.planning_task == "shooting_gd":
       from planners.shooting_gd import ShootingGDAgent
       act_pred, img_pred, feat_pred = ShootingGDAgent.shooting_gd(self, None, None, init_feat=feat, verbose=False)
+    elif self._c.planning_task == "colloc_second_order_goal":
+      # TODO this is the worst hack I've ever seen, remove this
+      from planners.colloc_goal import CollocGoalAgent
+      cls = self.__class__
+      self.__class__ = CollocGoalAgent
+      act_pred, img_pred, feat_pred, info = self.collocation_so_goal(None, goal, False, None, feat, verbose=False)
+      self.__class__ = cls
 
+    for k, v in info['metrics'].items():
+      self._metrics[f'opt_{k}'].update_state(v)
     if tf.equal(log_images, True):
       self._policy_summaries(feat_pred, act_pred, feat)
     return act_pred
 
-  def policy(self, obs, state, training):
+  def policy(self, obs, state, training, goal=None):
     feat, latent = self.get_init_feat(obs, state)
 
     if state is not None and state[2].shape[0] > 0:
@@ -79,11 +88,11 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       actions = state[2]
     else:
       with timing("Plan constructed in: "):
-        actions = self.plan(feat, not training)
+        actions = self.plan(feat, not training, goal)
     action = actions[0:1]
     action = self._exploration(action, training)
 
-    state = (latent, action, actions[1:])
+    state = (latent, action, actions[1:], goal)
     return action, state
 
 
@@ -117,14 +126,14 @@ def main(config):
     print('Load checkpoint.')
     agent.load(config.logdir / 'variables.pkl')
   state = None
+  goal = dreamer_colloc.get_goal(train_envs[0], config)
   while step < config.steps:
     print('Start evaluation.')
-    tools.simulate(
-        functools.partial(agent, training=False), test_envs, episodes=1)
+    tools.simulate(functools.partial(agent, training=False, goal=goal), test_envs, episodes=1)
     writer.flush()
     print('Start collection.')
     steps = config.eval_every // config.action_repeat
-    state = tools.simulate(agent, train_envs, steps, state=state)
+    state = tools.simulate(functools.partial(agent, goal=goal), train_envs, steps, state=state)
     step = dreamer.count_steps(datadir, config)
     agent.save(config.logdir / 'variables.pkl')
     if config.save_every:
