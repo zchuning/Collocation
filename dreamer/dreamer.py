@@ -453,6 +453,8 @@ def make_bare_env(config):
     env = wrappers.OneHotAction(env)
   elif suite == "mw":
     env = wrappers.MetaWorld(task, config.action_repeat)
+  elif suite == "muw":
+    env = wrappers.MultiWorld(task, config.action_repeat)
   elif suite == "mwsparse":
     env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "colloc":

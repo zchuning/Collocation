@@ -60,6 +60,81 @@ class DreamerEnv():
     return {'image': image, 'state': state}
 
 
+class MultiWorld(DreamerEnv):
+  def __init__(self, task, action_repeat):
+    super().__init__(action_repeat)
+    # Define aliases for SkewFit envs
+    if task == 'push':
+      task = 'SawyerPushNIPSEasy-v0'
+    elif task == 'door':
+      task = 'SawyerDoorHookResetFreeEnv-v1'
+    elif task == 'pick':
+      task = 'SawyerPickupEnvYZEasy-v0'
+      
+    import multiworld
+    from multiworld.core.image_env import ImageEnv
+    import multiworld.envs.mujoco.cameras as cam
+    multiworld.register_all_envs()
+    if task == 'SawyerDoorHookResetFreeEnv-v1':
+      init_cam = cam.sawyer_door_env_camera_v0
+    elif task == 'SawyerPickupEnvYZEasy-v0':
+      init_cam = cam.sawyer_pick_and_place_camera
+    else:
+      init_cam = cam.sawyer_init_camera_zoomed_in
+    with self.LOCK:
+      if task == 'SawyerPushNIPSEasy-v0':
+        from multiworld.envs.mujoco.sawyer_xyz.sawyer_push_nips import SawyerPushAndReachXYEasyEnv
+        kwargs=dict(
+            force_puck_in_goal_space=False,
+            mocap_low=(-0.1, 0.55, 0.0),
+            mocap_high=(0.1, 0.65, 0.5),
+            hand_goal_low=(-0.1, 0.55),
+            hand_goal_high=(0.1, 0.65),
+            puck_goal_low=(-0.15, 0.5),
+            puck_goal_high=(0.15, 0.7),
+
+            hide_goal=True,
+            reward_info=dict(
+                type="state_distance",
+            ),
+        )
+        env = SawyerPushAndReachXYEasyEnv(**kwargs, randomize_goals=False, fixed_puck_goal=(0.2, 0.6))
+      else:
+        env = gym.make(task)
+      self._env = ImageEnv(
+          env,
+          self._width,
+          init_camera=init_cam,
+          transpose=True,
+          normalize=False,
+          non_presampled_goal_img_is_garbage=False,
+      )
+
+  @property
+  def observation_space(self):
+    img_shape = self._size + (3,)
+    img_space = gym.spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
+    goal_space = gym.spaces.Box(low=self._env.goal_low, high=self._env.goal_high)
+    return gym.spaces.Dict({'image': img_space, 'goal': goal_space})
+
+  def get_goal(self):
+    return self._env.get_goal()['state_desired_goal']
+
+  def _get_obs(self, obs):
+    # This environment always uses the observation, not state
+    img = obs['image_observation'].reshape(3, self._width, self._width).transpose()[::-1, :, :]
+    obs['image'] = img
+    obs['state'] = obs['state_observation']
+    obs['goal'] = self.get_goal()
+    return obs
+
+  def render_goal(self):
+    goal = self._env.get_goal()['image_desired_goal']
+    goal = goal.reshape(3, self._width, self._width).transpose()[::-1, :, :]
+    goal_obs = dict(image=goal, reward=0.0)
+    return goal_obs
+  
+
 class DeskEnv(DreamerEnv):
   def __init__(self, task=None, action_repeat=1, width=64):
     super().__init__(action_repeat, width=width)

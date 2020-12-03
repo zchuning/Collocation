@@ -1,1 +1,5 @@
 git+git://github.com/rlworkgroup/metaworld.git@6f1a94f7b540045e81cf8d2fb758230b7dad5bdc
+pygame
+git+https://github.com/vitchyr/multiworld
+# Multiworld requires this version
+gym<=0.15.4
