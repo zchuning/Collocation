@@ -81,6 +81,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     return act_pred
 
   def policy(self, obs, state, training, goal=None):
+    # TODO remove passing in goal
     feat, latent = self.get_init_feat(obs, state)
 
     if state is not None and state[2].shape[0] > 0:
@@ -88,6 +89,8 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       actions = state[2]
     else:
       with timing("Plan constructed in: "):
+        if 'goal_image' in obs:
+          goal['image'] = obs['goal_image']
         actions = self.plan(feat, not training, goal)
     action = actions[0:1]
     action = self._exploration(action, training)

@@ -382,7 +382,8 @@ def preprocess(obs, config):
   with tf.device('cpu:0'):
     obs['image'] = tf.cast(obs['image'], dtype) / 255.0 - 0.5
     clip_rewards = dict(none=lambda x: x, tanh=tf.tanh)[config.clip_rewards]
-    obs['reward'] = clip_rewards(obs['reward'])
+    if 'reward' in obs:
+      obs['reward'] = clip_rewards(obs['reward'])
     for k, v in obs.items():
       obs[k] = tf.cast(v, dtype)
   return obs
@@ -425,6 +426,9 @@ def summarize_episode(episode, config, datadir, writer, prefix):
     [tf.summary.scalar('sim/' + k, v) for k, v in metrics]
     if prefix == 'test':
       tools.video_summary(f'sim/{prefix}/video', episode['image'][None])
+      if 'image_goal' in episode:
+        tools.image_summary(f'sim/{prefix}/goal', episode['image_goal'][[0]], step)
+        
 
 
 def make_env(config, writer, prefix, datadir, store):

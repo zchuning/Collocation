@@ -126,13 +126,13 @@ class MultiWorld(DreamerEnv):
     obs['image'] = img
     obs['state'] = obs['state_observation']
     obs['goal'] = self.get_goal()
+    obs['image_goal'] = self.render_goal()['image']
     return obs
 
   def render_goal(self):
     goal = self._env.get_goal()['image_desired_goal']
     goal = goal.reshape(3, self._width, self._width).transpose()[::-1, :, :]
-    goal_obs = dict(image=goal, reward=0.0)
-    return goal_obs
+    return {'image': goal}
   
 
 class DeskEnv(DreamerEnv):
