@@ -61,7 +61,7 @@ class DreamerEnv():
 
 
 class MultiWorld(DreamerEnv):
-  def __init__(self, task, action_repeat):
+  def __init__(self, task, action_repeat, randomize_goals=False):
     super().__init__(action_repeat)
     # Define aliases for SkewFit envs
     if task == 'push':
@@ -98,7 +98,7 @@ class MultiWorld(DreamerEnv):
                 type="state_distance",
             ),
         )
-        env = SawyerPushAndReachXYEasyEnv(**kwargs, randomize_goals=False, fixed_puck_goal=(0.2, 0.6))
+        env = SawyerPushAndReachXYEasyEnv(**kwargs, randomize_goals=randomize_goals)
       else:
         env = gym.make(task)
       self._env = ImageEnv(
@@ -172,7 +172,10 @@ class DreamerMujocoEnv(DreamerEnv):
       if task == 'pm_obstacle':
         self._env = Pointmass()
       elif 'pm_obstacle_long' in task:
-        width = float(task.split('_')[3])
+        if len(task.split('_')) > 3:
+          width = float(task.split('_')[3])
+        else:
+          width = 1.5
         self._env = PointmassLong(width, val='val' in task)
         camera_parameters = dict(azimuth=0, elevation=90, distance=4.5)
       elif task == 'pm_push':
@@ -246,10 +249,13 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 1.1
       self._offscreen.cam.lookat[1] = 1.1
       self._offscreen.cam.lookat[2] = -0.1
+      
+    self.rendered_goal = False
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
     # self._env.hand_init_pos = np.array([0, .6, .1])
+    self.rendered_goal = False
     return super().reset()
 
   def step(self, action):
@@ -263,21 +269,64 @@ class MetaWorld(DreamerEnv):
     return obs, total_reward, done, info
 
   def render_goal(self):
+    if self.rendered_goal:
+      return self.rendered_goal_obj
+    
     obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
     self._env.init_config['obj_init_pos'] = self._env.goal
     self._env.obj_init_pos = self._env.goal
     self._env.hand_init_pos = self._env.goal
-    self.reset()
+    self._env.reset()
     action = np.zeros(self._env.action_space.low.shape)
     state, reward, done, info = self._env.step(action)
-    goal_obs = self._get_obs(state)
-    goal_obs['reward'] = 0.0
+    goal_obs = MetaWorld._get_obs(self, state)
     self._env.hand_init_pos = self._env.init_config['hand_init_pos']
     self._env.init_config['obj_init_pos'] = obj_init_pos_temp
     self._env.obj_init_pos = self._env.init_config['obj_init_pos']
-    self.reset()
+    self._env.reset()
+    
+    self.rendered_goal = True
+    self.rendered_goal_obj = goal_obs
     return goal_obs
 
+
+class MultiTaskMetaWorld(MetaWorld):
+  def __init__(self, name, action_repeat, large_goal_space=True, hide_goal_markers=True):
+    super().__init__(name, action_repeat)
+  
+    # TODO this is for reaching, add pushing
+    if hide_goal_markers:
+      # Because of some issues, the MW environment resets the markers manually every step
+      # This hack changes that function to hide markers instead
+      self._env._set_goal_marker = lambda x: self.hide_markers()
+    if large_goal_space:
+      self._goal_low = np.array((-0.2, 0.4, 0.0))
+      self._goal_high = np.array((0.2, 0.8, 0.4))
+    else:
+      self._goal_low = np.array(self._env.goal_space.low)
+      self._goal_high = np.array(self._env.goal_space.high)
+    
+  def reset(self):
+    # TODO do I need this lock?
+    # with self.LOCK:
+    self._env.goal = np.random.uniform(
+        self._goal_low,
+        self._goal_high,
+        size=(self._goal_low.size)
+    )
+    obs = super().reset()
+    return obs
+  
+  def hide_markers(self):
+    self._env.data.site_xpos[self._env.model.site_name2id('goal_reach'), 2] = (-1000)
+    self._env.data.site_xpos[self._env.model.site_name2id('goal_push'), 2] = (-1000)
+    self._env.data.site_xpos[self._env.model.site_name2id('goal_pick_place'), 2] = (-1000)
+  
+  def _get_obs(self, state):
+    obs = super()._get_obs(state)
+    obs['image_goal'] = self.render_goal()['image']
+    return obs
+  
 
 class MetaWorldVis(MetaWorld):
   def __init__(self, name, action_repeat, width):
