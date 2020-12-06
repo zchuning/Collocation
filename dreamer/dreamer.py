@@ -131,7 +131,7 @@ class Dreamer(tools.Module):
     if state is not None and reset.any():
       mask = tf.cast(1 - reset, self._float)[:, None]
       state = tf.nest.map_structure(lambda x: x * mask, state)
-    if self._should_train(step):
+    if training and self._should_train(step):
       log = self._should_log(step)
       n = self._c.pretrain if self._should_pretrain() else self._c.train_steps
       print(f'Training for {n} steps.')
@@ -408,7 +408,7 @@ def load_dataset(directory, config):
 
 
 def summarize_episode(episode, config, datadir, writer, prefix):
-  episodes, steps = tools.count_episodes(datadir)
+  episodes, _ = tools.count_episodes(datadir)
   length = (len(episode['reward']) - 1) * config.action_repeat
   ret = episode['reward'].sum()
   print(f'{prefix.title()} episode of length {length} with return {ret:.1f}.')
@@ -425,7 +425,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
     tf.summary.experimental.set_step(step)
     [tf.summary.scalar('sim/' + k, v) for k, v in metrics]
     if prefix == 'test':
-      tools.video_summary(f'sim/{prefix}/video', episode['image'][None])
+      tools.video_summary(f'sim/{prefix}/video', episode['image'][None], step)
       if 'image_goal' in episode:
         tools.image_summary(f'sim/{prefix}/goal', episode['image_goal'][[0]], step)
         
