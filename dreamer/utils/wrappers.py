@@ -222,13 +222,12 @@ class MetaWorld(DreamerEnv):
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
     domain, task = name.split('_', 1)
+
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
+
     with self.LOCK:
-      if 'SawyerReachEnv' in task:
-        self._env = sawyer.SawyerReachPushPickPlaceEnv(task_type='reach')
-      else:
-        self._env = getattr(sawyer, task)()
+      self._env = getattr(sawyer, task)(random_init=False)
 
     self._action_repeat = action_repeat
     self._rand_init_goal = rand_init_goal
@@ -244,6 +243,33 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.distance = 0.9
       self._offscreen.cam.lookat[0] = 0.3
       self._offscreen.cam.lookat[1] = 0.55
+    elif task == "SawyerStickPushEnv" and "zoom" in domain:
+      # self._offscreen.cam.azimuth = 90
+      # self._offscreen.cam.elevation = -130
+      # self._offscreen.cam.distance = 0.9
+      # self._offscreen.cam.lookat[0] = 0.1
+      # self._offscreen.cam.lookat[1] = 0.55
+      # self._offscreen.cam.lookat[2] = -0.0
+      # Zoom
+      self._offscreen.cam.azimuth = 220
+      self._offscreen.cam.elevation = -140
+      self._offscreen.cam.distance = 0.8
+      self._offscreen.cam.lookat[0] = 0.2
+      self._offscreen.cam.lookat[1] = 0.65
+      self._offscreen.cam.lookat[2] = -0.1
+    elif task == "SawyerHammerEnv" and "zoom" in domain:
+      # self._offscreen.cam.azimuth = 300
+      # self._offscreen.cam.elevation = -130
+      # self._offscreen.cam.distance = 0.8
+      # self._offscreen.cam.lookat[0] = 0.2
+      # self._offscreen.cam.lookat[1] = 0.65
+      # self._offscreen.cam.lookat[2] = -0.0
+      # Zoom
+      self._offscreen.cam.azimuth = 220
+      self._offscreen.cam.elevation = -140
+      self._offscreen.cam.distance = 0.8
+      self._offscreen.cam.lookat[0] = 0.2
+      self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
     else:
       self._offscreen.cam.azimuth = 205
