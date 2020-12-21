@@ -4,6 +4,4 @@
 [submodule "dreamer/d4rl_repo"]
 	path = dreamer/d4rl_repo
 	url = https://github.com/rail-berkeley/d4rl
-[submodule "dreamer/metaworldv2"]
-	path = dreamer/metaworldv2
-	url = https://github.com/rlworkgroup/metaworld.git
+
