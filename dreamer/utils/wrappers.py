@@ -217,22 +217,27 @@ except:
 
 
 class MetaWorld(DreamerEnv):
-  def __init__(self, name, action_repeat, rand_init_goal=False, rand_init_hand=False, rand_init_obj=False):
+  def __init__(self, name, action_repeat, rand_goal=False, rand_hand=False, rand_obj=False, v2=False):
     super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz as sawyer
+    import metaworldv2.metaworld.envs.mujoco.sawyer_xyz.v2 as sawyerv2
     domain, task = name.split('_', 1)
 
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
 
     with self.LOCK:
-      self._env = getattr(sawyer, task)(random_init=False)
+      if v2:
+        self._env = getattr(sawyerv2, task)()
+        self._env.random_init = False
+      else:
+        self._env = getattr(sawyer, task)(random_init=False)
 
     self._action_repeat = action_repeat
-    self._rand_init_goal = rand_init_goal
-    self._rand_init_hand = rand_init_hand
-    self._rand_init_obj = rand_init_obj
+    self._rand_goal = rand_init_goal
+    self._rand_hand = rand_init_hand
+    self._rand_obj = rand_init_obj
     self._width = 64
     self._size = (self._width, self._width)
 
@@ -284,15 +289,10 @@ class MetaWorld(DreamerEnv):
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
     self.rendered_goal = False
+    # Submisstion config
     # self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
     # self._env.hand_init_pos = np.array([0., 0.55, 0.05])
-    if self._rand_init_goal:
-      self._env.goal = np.random.uniform(
-        self._env.goal_space.low,
-        self._env.goal_space.high,
-        size=(self._env.goal_space.low.size)
-      )
-    if self._rand_init_obj:
+    if self._rand_obj:
       if 'obj_init_pos' in self._env.init_config:
         # self._env.init_config['obj_init_pos'] = np.random.uniform(
         #   self._env.observation_space.low[3:6],
@@ -307,12 +307,18 @@ class MetaWorld(DreamerEnv):
         self._env.init_config['obj_init_pos'] = obj_init_pos
         # Initialize hand above object
         self._env.hand_init_pos = obj_init_pos
-        self._env.hand_init_pos[2] = 0.05 # np.random.uniform(0.05, 0.2) # 0.05
-    if self._rand_init_hand:
+        self._env.hand_init_pos[2] = 0.05 # np.random.uniform(0.05, 0.2)
+    if self._rand_hand:
       self._env.hand_init_pos = np.random.uniform(
         self._env.hand_low,
         self._env.hand_high,
         size=(self._env.hand_low.size)
+      )
+    if self._rand_goal:
+      self._env.goal = np.random.uniform(
+        self._env.goal_space.low,
+        self._env.goal_space.high,
+        size=(self._env.goal_space.low.size)
       )
     return super().reset()
 
