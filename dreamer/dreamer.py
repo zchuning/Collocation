@@ -458,9 +458,9 @@ def make_bare_env(config):
       task, config.action_repeat, (64, 64), grayscale=False,
       life_done=True, sticky_actions=True)
     env = wrappers.OneHotAction(env)
-elif suite == "mw" or suite == "mwv2":
+  elif suite == "mw":
     env = wrappers.MetaWorld(task, config.action_repeat, config.rand_init_goal,
-        config.rand_init_hand, config.rand_init_obj, "v2" in suite)
+        config.rand_init_hand, config.rand_init_obj)
   elif suite == "mwsparse":
     env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "mtmw":

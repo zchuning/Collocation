@@ -217,27 +217,28 @@ except:
 
 
 class MetaWorld(DreamerEnv):
-  def __init__(self, name, action_repeat, rand_goal=False, rand_hand=False, rand_obj=False, v2=False):
+  def __init__(self, name, action_repeat, rand_goal=False, rand_hand=False, rand_obj=False):
     super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
-    import metaworld.envs.mujoco.sawyer_xyz as sawyer
-    import metaworldv2.metaworld.envs.mujoco.sawyer_xyz.v2 as sawyerv2
+    import metaworld.envs.mujoco.sawyer_xyz.v1 as sawyer
+    import metaworld.envs.mujoco.sawyer_xyz.v2 as sawyerv2
     domain, task = name.split('_', 1)
 
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
 
+    v2 = 'V2' in task
     with self.LOCK:
-      if v2:
-        self._env = getattr(sawyerv2, task)()
-        self._env.random_init = False
+      if not v2:
+        self._env = getattr(sawyer, task)()
       else:
-        self._env = getattr(sawyer, task)(random_init=False)
+        self._env = getattr(sawyerv2, task)()
+    self._env.random_init = False
 
     self._action_repeat = action_repeat
-    self._rand_goal = rand_init_goal
-    self._rand_hand = rand_init_hand
-    self._rand_obj = rand_init_obj
+    self._rand_goal = rand_goal
+    self._rand_hand = rand_hand
+    self._rand_obj = rand_obj
     self._width = 64
     self._size = (self._width, self._width)
 
