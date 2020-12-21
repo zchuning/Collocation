@@ -249,7 +249,7 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.distance = 0.9
       self._offscreen.cam.lookat[0] = 0.3
       self._offscreen.cam.lookat[1] = 0.55
-    elif task == "SawyerStickPushEnv" and "zoom" in domain:
+    elif "SawyerStickPushEnv" in task and "zoom" in domain:
       # self._offscreen.cam.azimuth = 90
       # self._offscreen.cam.elevation = -130
       # self._offscreen.cam.distance = 0.9
@@ -263,7 +263,7 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 0.2
       self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
-    elif task == "SawyerHammerEnv" and "zoom" in domain:
+    elif "SawyerHammerEnv" in task and "zoom" in domain:
       # self._offscreen.cam.azimuth = 300
       # self._offscreen.cam.elevation = -130
       # self._offscreen.cam.distance = 0.8
