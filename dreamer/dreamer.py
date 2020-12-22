@@ -53,6 +53,7 @@ def define_config():
   config.rand_init_goal = False
   config.rand_init_hand = False
   config.rand_init_obj = False
+  config.env_rew_scale = 1.0
   # Model.
   config.deter_size = 200
   config.stoch_size = 30
@@ -460,7 +461,7 @@ def make_bare_env(config):
     env = wrappers.OneHotAction(env)
   elif suite == "mw":
     env = wrappers.MetaWorld(task, config.action_repeat, config.rand_init_goal,
-        config.rand_init_hand, config.rand_init_obj)
+        config.rand_init_hand, config.rand_init_obj, config.env_rew_scale)
   elif suite == "mwsparse":
     env = wrappers.MetaWorldSparseReward(task, config.action_repeat)
   elif suite == "mtmw":

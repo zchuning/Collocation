@@ -217,7 +217,7 @@ except:
 
 
 class MetaWorld(DreamerEnv):
-  def __init__(self, name, action_repeat, rand_goal=False, rand_hand=False, rand_obj=False):
+  def __init__(self, name, action_repeat, rand_goal=False, rand_hand=False, rand_obj=False, env_rew_scale=1.0):
     super().__init__(action_repeat)
     from mujoco_py import MjRenderContext
     import metaworld.envs.mujoco.sawyer_xyz.v1 as sawyer
@@ -241,6 +241,7 @@ class MetaWorld(DreamerEnv):
     self._rand_obj = rand_obj
     self._width = 64
     self._size = (self._width, self._width)
+    self.env_rew_scale = env_rew_scale
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
     if closeup:
@@ -327,10 +328,11 @@ class MetaWorld(DreamerEnv):
     total_reward = 0.0
     for step in range(self._action_repeat):
       state, reward, done, info = self._env.step(action)
-      total_reward += min(reward, 100000)
+      total_reward += reward # min(reward, 100000)
       if done:
         break
     obs = self._get_obs(state)
+    total_reward /= self.env_rew_scale
     return obs, total_reward, done, info
 
   def render_goal(self):
