@@ -332,7 +332,7 @@ class MetaWorld(DreamerEnv):
       if done:
         break
     obs = self._get_obs(state)
-    total_reward /= self.env_rew_scale
+    total_reward *= self.env_rew_scale
     return obs, total_reward, done, info
 
   def render_goal(self):
