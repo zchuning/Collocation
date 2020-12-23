@@ -80,7 +80,7 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       self._policy_summaries(feat_pred, act_pred, feat)
     return act_pred
 
-  def policy(self, obs, state, training, goal=None):
+  def policy(self, obs, state, training):
     # TODO remove passing in goal
     feat, latent = self.get_init_feat(obs, state)
 
@@ -90,12 +90,16 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     else:
       with timing("Plan constructed in: "):
         if 'goal_image' in obs:
-          goal['image'] = obs['goal_image']
+          goal = {'image': obs['goal_image']}
+        elif 'image_goal' in obs:
+          goal = {'image': obs['image_goal']}
+        else:
+          goal = None
         actions = self.plan(feat, not training, goal)
     action = actions[0:1]
     action = self._exploration(action, training)
 
-    state = (latent, action, actions[1:], goal)
+    state = (latent, action, actions[1:])
     return action, state
 
 
@@ -129,14 +133,13 @@ def main(config):
     print('Load checkpoint.')
     agent.load(config.logdir / 'variables.pkl')
   state = None
-  goal = dreamer_colloc.get_goal(train_envs[0], config)
   while step < config.steps:
     print('Start evaluation.')
-    tools.simulate(functools.partial(agent, training=False, goal=goal), test_envs, episodes=1)
+    tools.simulate(functools.partial(agent, training=False), test_envs, episodes=1)
     writer.flush()
     print('Start collection.')
     steps = config.eval_every // config.action_repeat
-    state = tools.simulate(functools.partial(agent, goal=goal), train_envs, steps, state=state)
+    state = tools.simulate(agent, train_envs, steps, state=state)
     step = dreamer.count_steps(datadir, config)
     agent.save(config.logdir / 'variables.pkl')
     if config.save_every:
