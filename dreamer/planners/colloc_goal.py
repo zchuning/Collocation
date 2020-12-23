@@ -10,12 +10,12 @@ from blox.utils import timing
 
 
 class CollocGoalAgent(DreamerColloc):
-  def compute_rewards(self, feats, goal):
+  def compute_rewards(self, feats, goal, axis=None):
     """ Defines what reward is used for collocation """
     if self._c.goal_distance == 'latent':
-      return -tf.reduce_sum((feats - goal) ** 2)
+      return -tf.reduce_sum((feats - goal) ** 2, axis=axis)
     elif self._c.goal_distance == 'embed':
-      return -tf.reduce_sum((self._embed(feats).mode() - self._embed(goal).mode()) ** 2)
+      return -tf.reduce_sum((self._embed(feats).mode() - self._embed(goal).mode()) ** 2, axis=axis)
   
   def reward_residual(self, feats, goal):
     """ Defines what reward residual is used for collocation """
@@ -368,3 +368,121 @@ class CollocGoalAgent(DreamerColloc):
     if self._c.visualize:
       self.visualize_colloc(forces, dyn_loss, img_pred, act_pred, init_feat)
     return act_pred, img_pred
+  
+  
+  def shooting_cem_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True, log_extras=False):
+    horizon = self._c.planning_horizon
+    mpc_steps = self._c.mpc_steps
+    elite_size = int(self._c.cem_batch_size * self._c.cem_elite_ratio)
+    var_len = self._actdim * horizon
+    batch = self._c.cem_batch_size
+
+    # Get initial statesi
+    if init_feat is None:
+      init_feat, _ = self.get_init_feat(obs)
+    goal_feat, _ = self.get_init_feat(goal_obs)
+
+    def eval_fitness(t):
+      init_feats = tf.tile(init_feat, [batch, 1])
+      actions = tf.reshape(t, [batch, horizon, -1])
+      feats = self._dynamics.imagine_feat(actions, init_feats, deterministic=True)
+      rewards = self.compute_rewards(feats, goal_feat, axis=[1, 2])
+      return rewards, feats
+
+    # CEM loop:
+    rewards = []
+    act_losses = []
+    means = tf.zeros(var_len, dtype=self._float)
+    stds = tf.ones(var_len, dtype=self._float)
+    for i in range(self._c.cem_steps):
+      # print("CEM step {0} of {1}".format(i + 1, self._c.cem_steps))
+      # Sample action sequences and evaluate fitness
+      samples = tfd.MultivariateNormalDiag(means, stds).sample(sample_shape=[batch])
+      samples = tf.clip_by_value(samples, -1, 1)
+      fitness, feats = eval_fitness(samples)
+      rewards.append(tf.reduce_mean(fitness).numpy())
+      # Refit distribution to elite samples
+      _, elite_inds = tf.nn.top_k(fitness, elite_size, sorted=False)
+      elite_samples = tf.gather(samples, elite_inds)
+      if self._c.mppi:
+        elite_fitness = tf.gather(fitness, elite_inds)
+        weights = tf.expand_dims(tf.nn.softmax(self._c.mppi_gamma * elite_fitness), axis=1)
+        means = tf.reduce_sum(weights * elite_samples, axis=0)
+        stds = tf.sqrt(tf.reduce_sum(weights * tf.square(elite_samples - means), axis=0))
+      else:
+        means, vars = tf.nn.moments(elite_samples, 0)
+        stds = tf.sqrt(vars + 1e-6)
+      # Log action violations
+      means_pred = tf.reshape(means, [horizon, -1])
+      act_pred = means_pred[:min(horizon, mpc_steps)]
+      act_loss = tf.reduce_sum(tf.clip_by_value(tf.square(act_pred) - 1, 0, np.inf))
+      act_losses.append(act_loss)
+
+    means_pred = tf.reshape(means, [horizon, -1])
+    act_pred = means_pred[:min(horizon, mpc_steps)]
+    feat_pred = feats[elite_inds[0]]
+    if verbose:
+      print("Final average reward: {0}".format(rewards[-1] / horizon))
+      # Log curves
+      curves = dict(rewards=rewards, action_violation=act_losses)
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
+    if self._c.visualize:
+      img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
+      import matplotlib.pyplot as plt
+      plt.title("Reward Curve")
+      plt.plot(range(len(rewards)), rewards)
+      plt.savefig('./lr.jpg')
+      plt.show()
+    else:
+      img_pred = None
+    return act_pred, img_pred, feat_pred, {'metrics': {}}
+  
+  def shooting_gd_goal(self, obs, goal_obs, save_images, step, init_feat=None, verbose=True, log_extras=False):
+    horizon = self._c.planning_horizon
+    mpc_steps = self._c.mpc_steps
+
+    # Initialize decision variables
+    if init_feat is None:
+      init_feat, _ = self.get_init_feat(obs)
+    goal_feat, _ = self.get_init_feat(goal_obs)
+    t = tf.Variable(tf.random.normal((horizon, self._actdim), dtype=self._float))
+    lambdas = tf.ones([horizon, self._actdim])
+    act_loss, rewards = [], []
+    opt = tf.keras.optimizers.Adam(learning_rate=self._c.gd_lr)
+    # Gradient descent loop
+    for i in range(self._c.gd_steps):
+      # print("Gradient descent step {0}".format(i + 1))
+      with tf.GradientTape() as g:
+        g.watch(t)
+        actions = t[None, :]
+        feats = self._dynamics.imagine_feat(actions, init_feat, deterministic=True)
+        reward = self.compute_rewards(feats, goal_feat, axis=None)
+        actions_viol = tf.clip_by_value(tf.square(actions) - 1, 0, np.inf)
+        actions_constr = tf.reduce_sum(lambdas * actions_viol)
+        fitness = - self._c.rew_loss_scale * reward + self._c.act_loss_scale * actions_constr
+      grad = g.gradient(fitness, t)
+      opt.apply_gradients([(grad, t)])
+      t.assign(tf.clip_by_value(t, -1, 1)) # Prevent OOD preds
+      act_loss.append(tf.reduce_sum(actions_viol))
+      rewards.append(tf.reduce_sum(reward))
+      if i % self._c.lam_int == self._c.lam_int - 1:
+        lambdas += self._c.lam_lr * actions_viol
+
+    act_pred = t[:min(horizon, mpc_steps)]
+    feat_pred = feats
+    img_pred = self._decode(feat_pred).mode()
+    if verbose:
+      print(f"Final average action violation: {act_loss[-1] / horizon}")
+      print(f"Final average reward: {rewards[-1] / horizon}")
+      curves = dict(rewards=rewards, action_violation=act_loss)
+      self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
+    if self._c.visualize:
+      img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
+      import matplotlib.pyplot as plt
+      plt.title("Reward Curve")
+      plt.plot(range(len(rewards)), rewards)
+      plt.savefig('./lr.jpg')
+      plt.show()
+    else:
+      img_pred = None
+    return act_pred, img_pred, feat_pred, {'metrics': {}}

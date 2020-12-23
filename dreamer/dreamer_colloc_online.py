@@ -66,12 +66,17 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     elif self._c.planning_task == "shooting_gd":
       from planners.shooting_gd import ShootingGDAgent
       act_pred, img_pred, feat_pred = ShootingGDAgent.shooting_gd(self, None, None, init_feat=feat, verbose=False)
-    elif self._c.planning_task == "colloc_second_order_goal":
+    elif 'goal' in self._c.planning_task:
       # TODO this is the worst hack I've ever seen, remove this
       from planners.colloc_goal import CollocGoalAgent
       cls = self.__class__
       self.__class__ = CollocGoalAgent
-      act_pred, img_pred, feat_pred, info = self.collocation_so_goal(None, goal, False, None, feat, verbose=False)
+      if self._c.planning_task == "colloc_second_order_goal":
+        act_pred, img_pred, feat_pred, info = self.collocation_so_goal(None, goal, False, None, feat, verbose=False)
+      elif self._c.planning_task == "shooting_cem_goal":
+        act_pred, img_pred, feat_pred, info = self.shooting_cem_goal(None, goal, False, None, feat, verbose=False)
+      elif self._c.planning_task == "shooting_gd_goal":
+        act_pred, img_pred, feat_pred, info = self.shooting_gd_goal(None, goal, False, None, feat, verbose=False)
       self.__class__ = cls
 
     for k, v in info['metrics'].items():
