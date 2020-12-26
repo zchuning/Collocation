@@ -244,6 +244,7 @@ class MetaWorld(DreamerEnv):
     domain, task = name.split('_', 1)
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
+    frontview = False
     with self.LOCK:
       if 'SawyerReachEnv' in task:
         self._env = sawyer.SawyerReachPushPickPlaceEnv(task_type='reach')
@@ -262,6 +263,13 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 0.3
       self._offscreen.cam.lookat[1] = 0.55
       self._offscreen.cam.lookat[2] = -0.1
+    elif frontview:
+      self._offscreen.cam.azimuth = 90
+      self._offscreen.cam.elevation = 22 + 180
+      self._offscreen.cam.distance = 0.82
+      self._offscreen.cam.lookat[0] = 0.
+      self._offscreen.cam.lookat[1] = 0.55
+      self._offscreen.cam.lookat[2] = 0.
     else:
       self._offscreen.cam.azimuth = 205
       self._offscreen.cam.elevation = -165
