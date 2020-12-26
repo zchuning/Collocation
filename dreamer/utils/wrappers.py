@@ -98,7 +98,27 @@ class MultiWorld(DreamerEnv):
                 type="state_distance",
             ),
         )
+        fixed_puck_goal = (0.05, 0.6) # Left
+        fixed_puck_goal = (-0.1, 0.6) # Right
+        fixed_puck_goal = (-0.05, 0.7) # forward
+        fixed_puck_goal = (0.05, 0.7) # forward left
+        # fixed_puck_goal = (-0.15, 0.7) # forward right
+        # fixed_puck_goal = (-0.05, 0.5) # backward
+        # fixed_hand_goal = (-0.1, 0.6)
+        fixed_hand_goal = (-0.05, 0.6)
+        
+        # Hand forward, object right
+        fixed_puck_goal = (-0.1, 0.7)
+        fixed_hand_goal = (0.0, 0.8)
+        # Hand forward, object left
+        fixed_puck_goal = (0.1, 0.7)
+        fixed_hand_goal = (0.0, 0.8)
+        
         env = SawyerPushAndReachXYEasyEnv(**kwargs, randomize_goals=randomize_goals)
+                                          # fixed_puck_goal=fixed_puck_goal,
+                                          # fixed_hand_goal=fixed_hand_goal)
+                                          # fixed_puck_goal=(0.1, 0.6),
+                                          # fixed_hand_goal=(0.05, 0.6))
       else:
         env = gym.make(task)
       self._env = ImageEnv(
@@ -226,6 +246,7 @@ class MetaWorld(DreamerEnv):
 
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
+    frontview = False
 
     v2 = 'V2' in task
     with self.LOCK:
@@ -278,6 +299,13 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 0.2
       self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
+    elif frontview:
+      self._offscreen.cam.azimuth = 90
+      self._offscreen.cam.elevation = 22 + 180
+      self._offscreen.cam.distance = 0.82
+      self._offscreen.cam.lookat[0] = 0.
+      self._offscreen.cam.lookat[1] = 0.55
+      self._offscreen.cam.lookat[2] = 0.
     else:
       self._offscreen.cam.azimuth = 205
       self._offscreen.cam.elevation = -165
@@ -340,10 +368,20 @@ class MetaWorld(DreamerEnv):
       return self.rendered_goal_obj
 
     obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
-    self._env.init_config['obj_init_pos'] = self._env.goal
-    self._env.obj_init_pos = self._env.goal
+    if self._env.task_type == 'push':
+      self._env.init_config['obj_init_pos'] = self._env.goal
+      self._env.obj_init_pos = self._env.goal
     self._env.hand_init_pos = self._env.goal
-    self._env.reset()
+    # self._env.hand_init_pos = np.array([0, .6, .0]) # Low
+    # self._env.hand_init_pos = np.array([0, .6, .4]) # High
+    # self._env.hand_init_pos = np.array([0, .8, .2]) # Forward
+    # self._env.hand_init_pos = np.array([0, .4, .2]) # Backward
+    # self._env.hand_init_pos = np.array([-.2, .6, .2]) # Left?
+    # self._env.hand_init_pos = np.array([-.2, .6, .2]) # Right?
+    self._env.reset_model()
+    error = np.sum((self._env.init_fingerCOM - self._env.goal) ** 2)
+    if error > 0.01:
+      print('WARNING: the goal is not rendered correctly')
     action = np.zeros(self._env.action_space.low.shape)
     state, reward, done, info = self._env.step(action)
     goal_obs = MetaWorld._get_obs(self, state)
@@ -359,20 +397,36 @@ class MetaWorld(DreamerEnv):
 
 class MultiTaskMetaWorld(MetaWorld):
   def __init__(self, name, action_repeat, large_goal_space=True, hide_goal_markers=True):
+    def parse(n):
+      key_options = ['glarge', 'gmed', 'gsmall']
+      # Get key values
+      keys = dict((k, k in n) for k in key_options)
+      # Remove keys from name
+      n = '_'.join([s for s in n.split('_') if s not in key_options])
+      return keys, n
+    
+    keys, name = parse(name)
     super().__init__(name, action_repeat)
 
     # TODO this is for reaching, add pushing
     if hide_goal_markers:
       # Because of some issues, the MW environment resets the markers manually every step
       # This hack changes that function to hide markers instead
-      self._env._set_goal_marker = lambda x: self.hide_markers()
-    if large_goal_space:
+      self._env._set_goal_marker = lambda x: (type(self._env)._set_goal_marker(self._env, x), self.hide_markers())
+    # TODO these goal spaces are for reaching, add pushing
+    if keys['gsmall']:
+      self._goal_low = np.array((-0.1, 0.5, 0.2))
+      self._goal_high = np.array((0.1, 0.7, 0.2))
+    elif keys['gmed']:
+      self._goal_low = np.array((-0.2, 0.4, 0.2))
+      self._goal_high = np.array((0.2, 0.8, 0.2))
+    else:  # if keys['glarge']:
       self._goal_low = np.array((-0.2, 0.4, 0.0))
       self._goal_high = np.array((0.2, 0.8, 0.4))
-    else:
-      self._goal_low = np.array(self._env.goal_space.low)
-      self._goal_high = np.array(self._env.goal_space.high)
-
+      # else:
+      #   self._goal_low = np.array(self._env.goal_space.low)
+      #   self._goal_high = np.array(self._env.goal_space.high)
+  
   def reset(self):
     # TODO do I need this lock?
     # with self.LOCK:
@@ -385,13 +439,17 @@ class MultiTaskMetaWorld(MetaWorld):
     return obs
 
   def hide_markers(self):
-    self._env.data.site_xpos[self._env.model.site_name2id('goal_reach'), 2] = (-1000)
-    self._env.data.site_xpos[self._env.model.site_name2id('goal_push'), 2] = (-1000)
-    self._env.data.site_xpos[self._env.model.site_name2id('goal_pick_place'), 2] = (-1000)
-
+    for site in filter(lambda x: 'goal' in x, self._env.model.site_names):
+      self._env.model.site_rgba[self._env.model.site_name2id(site), 3] = 0.0
+      # self._env.data.site_rgba[self._env.model.site_name2id(site)]
+      # self._env.data.site_xpos[self._env.model.site_name2id(site), 2] = (-1000)
+      # self._env.data.site_xpos[self._env.model.site_name2id('goal_push'), 2] = (-1000)
+      # self._env.data.site_xpos[self._env.model.site_name2id('goal_pick_place'), 2] = (-1000)
+  
   def _get_obs(self, state):
     obs = super()._get_obs(state)
     obs['image_goal'] = self.render_goal()['image']
+    obs['goal'] = self._env.goal
     return obs
 
 
