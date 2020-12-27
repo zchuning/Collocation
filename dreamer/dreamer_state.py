@@ -17,66 +17,12 @@ from tensorflow_probability import distributions as tfd
 sys.path.append(str(pathlib.Path(__file__).parent))
 
 from utils import wrappers, tools, models
+import dreamer
 from dreamer import Dreamer, make_env, count_steps
 
-
 def define_config():
-  config = tools.AttrDict()
-  # General.
-  config.logdir = pathlib.Path('.')
-  config.seed = 0
-  config.steps = 5e6
-  config.eval_every = 1e4
-  config.log_every = 1e3
-  config.log_scalars = True
-  config.log_images = False
-  config.gpu_growth = True
-  config.precision = 32
+  config = dreamer.define_config()
   config.debug = False
-  # Environment.
-  config.task = 'dmc_walker_walk'
-  config.envs = 1
-  config.parallel = 'none'
-  config.action_repeat = 2
-  config.time_limit = 1000
-  config.prefill = 5000
-  config.eval_noise = 0.0
-  config.clip_rewards = 'none'
-  config.random_init = False
-  # Model.
-  config.deter_size = 200
-  config.stoch_size = 30
-  config.num_units = 400
-  config.dense_act = 'elu'
-  config.cnn_act = 'relu'
-  config.cnn_depth = 32
-  config.pcont = False
-  config.free_nats = 3.0
-  config.kl_scale = 1.0
-  config.pcont_scale = 10.0
-  config.weight_decay = 0.0
-  config.weight_decay_pattern = r'.*'
-  # Training.
-  config.batch_size = 50
-  config.batch_length = 50
-  config.train_every = 1000
-  config.train_steps = 100
-  config.pretrain = 100
-  config.model_lr = 6e-4
-  config.value_lr = 8e-5
-  config.actor_lr = 8e-5
-  config.grad_clip = 100.0
-  config.dataset_balance = False
-  # Behavior.
-  config.discount = 0.99
-  config.disclam = 0.95
-  config.horizon = 15
-  config.action_dist = 'tanh_normal'
-  config.action_init_std = 5.0
-  config.expl = 'additive_gaussian'
-  config.expl_amount = 0.3
-  config.expl_decay = 0.0
-  config.expl_min = 0.0
   # State-based model
   config.state_size = 9
   config.embed_size = 32
@@ -84,7 +30,7 @@ def define_config():
 
 
 class DreamerState(Dreamer):
-  def _train(self, data, log_images):
+  def train(self, data, log_images=False):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
       post, prior = self._dynamics.observe(embed, data['action'])
@@ -174,20 +120,8 @@ class DreamerState(Dreamer):
 
 
 def main(config):
-  if config.gpu_growth:
-    for gpu in tf.config.experimental.list_physical_devices('GPU'):
-      tf.config.experimental.set_memory_growth(gpu, True)
-  assert config.precision in (16, 32), config.precision
-  if config.precision == 16:
-    prec.set_policy(prec.Policy('mixed_float16'))
-  if config.debug:
-    tf.config.experimental_run_functions_eagerly(True)
-  config.steps = int(config.steps)
-  config.logdir.mkdir(parents=True, exist_ok=True)
-  print('Logdir', config.logdir)
-
-  # Create environments.
   datadir = config.logdir / 'episodes'
+  # Create environments.
   writer = tf.summary.create_file_writer(
       str(config.logdir), max_queue=1000, flush_millis=20000)
   writer.set_as_default()
