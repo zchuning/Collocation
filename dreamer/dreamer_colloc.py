@@ -67,6 +67,7 @@ def define_config():
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
+  config.log_colloc_scalars = False
   config.eval_tasks = 1
   config.eval_store_episodes = True
   # Goal-conditioned
@@ -201,27 +202,28 @@ class DreamerColloc(Dreamer):
       act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
-      # Compute and record dynamics loss and reward
-      init_loss = tf.linalg.norm(feat_preds[:, 0] - init_feat)
-      rew_raw = self._reward(feat_preds).mode()
-      states = self._dynamics.from_feat(feat_preds[:, :-1])
-      priors = self._dynamics.img_step(states, act_preds[:, :-1])
-      priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
-      dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[:, 1:]), 2)
-      act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:, :-1]) - 1, 0, np.inf), 2)
-      # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
+      if self._c.log_colloc_scalars:
+        # Compute and record dynamics loss and reward
+        init_loss = tf.linalg.norm(feat_preds[:, 0] - init_feat)
+        rew_raw = self._reward(feat_preds).mode()
+        states = self._dynamics.from_feat(feat_preds[:, :-1])
+        priors = self._dynamics.img_step(states, act_preds[:, :-1])
+        priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
+        dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[:, 1:]), 2)
+        act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:, :-1]) - 1, 0, np.inf), 2)
+        # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
 
-      # Record losses and effective coefficients
-      metrics.dynamics.append(tf.reduce_sum(dyn_viol))
-      metrics.action_violation.append(tf.reduce_sum(act_viol))
-      metrics.rewards.append(tf.reduce_sum(rew_raw))
-      metrics.dynamics_coeff.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
-      metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
+        # Record losses and effective coefficients
+        metrics.dynamics.append(tf.reduce_sum(dyn_viol))
+        metrics.action_violation.append(tf.reduce_sum(act_viol))
+        metrics.rewards.append(tf.reduce_sum(rew_raw))
+        metrics.dynamics_coeff.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
+        metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
-      # Record model rewards
-      model_feats = self._dynamics.imagine_feat(act_preds_clipped[0:1], init_feat, deterministic=True)
-      model_rew = self._reward(model_feats[0:1]).mode()
-      metrics.model_rewards.append(tf.reduce_sum(model_rew))
+        # Record model rewards
+        model_feats = self._dynamics.imagine_feat(act_preds_clipped[0:1], init_feat, deterministic=True)
+        model_rew = self._reward(model_feats[0:1]).mode()
+        metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
       if log_extras:
         # Record model sample rewards
@@ -560,7 +562,7 @@ def main(config):
   dreamer.setup(config, config.logdir_colloc)
   env = make_env(config)
   agent = build_agent(config, env)
-  
+
   run_metrics = AttrDefaultDict(list)
   for i in range(config.eval_tasks):
     print(f'------- Evaluating plan {i} of {config.eval_tasks}')
@@ -572,19 +574,19 @@ def main(config):
     run_metrics.reward_pred.append(tot_pr_rew)
     run_metrics.success.append(success)
     run_metrics.goal_dist.append(goal_dist)
-    
+
   print(f'------- Finished {config.eval_tasks}')
   log_keys = ['reward_dense', 'reward_pred', 'success', 'goal_dist']
   if config.collect_sparse_reward:
     log_keys = log_keys + ['reward_sparse']
-  
+
   for key in log_keys:
     save_key = 'total_reward/' + key.replace('reward_', '')
     print(f'Average {key}: {np.mean(run_metrics[key])}')
     agent.logger.log_graph_hist(None, {save_key: run_metrics[key]})
     agent.logger.log_graph(None, {save_key + '_std': [np.std(run_metrics[key])]})
     agent.logger.log_graph(None, {save_key + '_mean': [np.mean(run_metrics[key])]})
-  
+
   agent.logger.log_scatter(
     'obtained_predicted_reward', np.stack([run_metrics.reward_sparse, run_metrics.reward_pred], 0))
   with (config.logdir_colloc / 'eval_data.pkl').open('wb') as f: pickle.dump(dict(run_metrics), f)
