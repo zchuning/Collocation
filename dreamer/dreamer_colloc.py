@@ -201,17 +201,29 @@ class DreamerColloc(Dreamer):
       plans.append(plan)
       act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
+<<<<<<< HEAD
+=======
+      states = self._dynamics.from_feat(feat_preds[None, :-1])
+      priors = self._dynamics.img_step(states, act_preds[None, :-1])
+      priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
+      dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]), 1)
+      act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf), 1)
+      # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
+>>>>>>> Fix collocation logging
 
       if self._c.log_colloc_scalars:
         # Compute and record dynamics loss and reward
         init_loss = tf.linalg.norm(feat_preds[:, 0] - init_feat)
         rew_raw = self._reward(feat_preds).mode()
+<<<<<<< HEAD
         states = self._dynamics.from_feat(feat_preds[:, :-1])
         priors = self._dynamics.img_step(states, act_preds[:, :-1])
         priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
         dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[:, 1:]), 2)
         act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:, :-1]) - 1, 0, np.inf), 2)
         # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
+=======
+>>>>>>> Fix collocation logging
 
         # Record losses and effective coefficients
         metrics.dynamics.append(tf.reduce_sum(dyn_viol))
@@ -308,8 +320,6 @@ class DreamerColloc(Dreamer):
     act_preds = act_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
       act_preds = tf.zeros_like(act_preds)
-    imag_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
-    predicted_rewards = tf.reduce_sum(self._reward(imag_feats).mode())
     feat_preds = feat_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if verbose:
       print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
@@ -323,7 +333,10 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)), 'plans': plans}
-    info["predicted_rewards"] = predicted_rewards.numpy()
+    if self._c.log_colloc_scalars:
+      imag_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      predicted_rewards = tf.reduce_sum(self._reward(imag_feats).mode())
+      info["predicted_rewards"] = predicted_rewards.numpy()
     return act_preds, img_preds, feat_preds, info
 
   @tf.function()
