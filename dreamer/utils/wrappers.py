@@ -247,8 +247,9 @@ class MetaWorld(DreamerEnv):
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
     frontview = False
+    self.task_type = self.get_task_type(task)
 
-    v2 = 'V2' in task
+    self.v2 = v2 = 'V2' in task
     with self.LOCK:
       if not v2:
         self._env = getattr(sawyer, task)()
@@ -316,6 +317,14 @@ class MetaWorld(DreamerEnv):
 
     self.rendered_goal = False
 
+  def get_task_type(self, task):
+    if 'Push' in task:
+      return 'push'
+    if 'Reach' in task:
+      return 'reach'
+    if 'bin' in task.lower():
+      return 'pickbin'
+
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
     self.rendered_goal = False
@@ -368,7 +377,7 @@ class MetaWorld(DreamerEnv):
       return self.rendered_goal_obj
 
     obj_init_pos_temp = self._env.init_config['obj_init_pos'].copy()
-    if self._env.task_type == 'push':
+    if self.task_type == 'push':
       self._env.init_config['obj_init_pos'] = self._env.goal
       self._env.obj_init_pos = self._env.goal
     self._env.hand_init_pos = self._env.goal
@@ -379,9 +388,10 @@ class MetaWorld(DreamerEnv):
     # self._env.hand_init_pos = np.array([-.2, .6, .2]) # Left?
     # self._env.hand_init_pos = np.array([-.2, .6, .2]) # Right?
     self._env.reset_model()
-    error = np.sum((self._env.init_fingerCOM - self._env.goal) ** 2)
-    if error > 0.01:
-      print('WARNING: the goal is not rendered correctly')
+    if not self.v2:
+      error = np.sum((self._env.init_fingerCOM - self._env.goal) ** 2)
+      if error > 0.01:
+        print('WARNING: the goal is not rendered correctly')
     action = np.zeros(self._env.action_space.low.shape)
     state, reward, done, info = self._env.step(action)
     goal_obs = MetaWorld._get_obs(self, state)
