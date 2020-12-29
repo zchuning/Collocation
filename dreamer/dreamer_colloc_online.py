@@ -7,6 +7,7 @@ import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['MUJOCO_GL'] = 'egl'
 
+import numpy as np
 import tensorflow as tf
 from blox.utils import timing
 
@@ -85,10 +86,16 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
       self._policy_summaries(feat_pred, act_pred, feat)
     return act_pred
 
-  def policy(self, obs, state, training):
+  def policy(self, obs, state, training, reset):
     # TODO remove passing in goal
     feat, latent = self.get_init_feat(obs, state)
-
+  
+    if state is not None and reset.any():
+      # Flush actions on reset
+      state = list(state)
+      state[2] = np.zeros((0,))
+      state = tuple(state)
+      
     if state is not None and state[2].shape[0] > 0:
       # Cached actions
       actions = state[2]

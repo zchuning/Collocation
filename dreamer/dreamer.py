@@ -144,13 +144,13 @@ class Dreamer(tools.Module):
         self.train(next(self._dataset), log_images)
       if log:
         self._write_summaries()
-    action, state = self.policy(obs, state, training)
+    action, state = self.policy(obs, state, training, reset)
     if training:
       self._step.assign_add(len(reset) * self._c.action_repeat)
     return action, state
 
   @tf.function
-  def policy(self, obs, state, training):
+  def policy(self, obs, state, training, reset):
     feat, latent = self.get_init_feat(obs, state)
     if training:
       action = self._actor(feat).sample()
