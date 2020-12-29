@@ -106,6 +106,11 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
 
     state = (latent, action, actions[1:])
     return action, state
+  
+  @tf.function()
+  def train(self, data, log_images=False):
+    # TODO fix this
+    dreamer.Dreamer.train(self, data, log_images)
 
 
 def main(config):
