@@ -58,15 +58,14 @@ class DreamerCollocOnline(dreamer_colloc.DreamerColloc):
     # - A 2x speed up can be achieved by removing the baggage from collocation_so. This is not large enough to be worth it
     # - Otherwise, the speed is determined by the decomposition in the GN solver. That operation takes about 25% of the
     # time now, making it unlikely this can be sped up
-    info = None
     if self._c.planning_task == "colloc_second_order":
       act_pred, img_pred, feat_pred, info = self.collocation_so(None, None, False, None, feat, verbose=False)
     elif self._c.planning_task == "shooting_cem":
       from planners.shooting_cem import ShootingCEMAgent
-      act_pred, img_pred, feat_pred = ShootingCEMAgent.shooting_cem(self, None, None, init_feat=feat, verbose=False)
+      act_pred, img_pred, feat_pred, info = ShootingCEMAgent.shooting_cem(self, None, None, init_feat=feat, verbose=False)
     elif self._c.planning_task == "shooting_gd":
       from planners.shooting_gd import ShootingGDAgent
-      act_pred, img_pred, feat_pred = ShootingGDAgent.shooting_gd(self, None, None, init_feat=feat, verbose=False)
+      act_pred, img_pred, feat_pred, info = ShootingGDAgent.shooting_gd(self, None, None, init_feat=feat, verbose=False)
     elif 'goal' in self._c.planning_task:
       # TODO this is the worst hack I've ever seen, remove this
       from planners.colloc_goal import CollocGoalAgent
