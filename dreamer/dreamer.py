@@ -422,6 +422,7 @@ def summarize_episode(episode, config, datadir, writer, prefix):
       (f'episodes', episodes)]
   if config.collect_sparse_reward:
     metrics.append((f'{prefix}/sparse_return', float(episode['sparse_reward'].sum())))
+    metrics.append((f'{prefix}/success', float(episode['sparse_reward'].sum() > 0)))
   step = count_steps(datadir, config)
   with (config.logdir / 'metrics.jsonl').open('a') as f:
     f.write(json.dumps(dict([('step', step)] + metrics)) + '\n')
