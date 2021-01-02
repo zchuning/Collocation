@@ -60,10 +60,10 @@ class ShootingCEMAgent(DreamerColloc):
     means_pred = tf.reshape(means, [horizon, -1])
     act_pred = means_pred[:min(horizon, mpc_steps)]
     feat_pred = feats[elite_inds[0]]
+    curves = dict(rewards=rewards, action_violation=act_losses)
     if verbose:
       print("Final average reward: {0}".format(rewards[-1] / horizon))
       # Log curves
-      curves = dict(rewards=rewards, action_violation=act_losses)
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
       img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
@@ -74,4 +74,4 @@ class ShootingCEMAgent(DreamerColloc):
       plt.show()
     else:
       img_pred = None
-    return act_pred, img_pred, feat_pred
+    return act_pred, img_pred, feat_pred, {'metrics': map_dict(lambda x: x[-1] / horizon, curves)}
