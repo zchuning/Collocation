@@ -109,14 +109,14 @@ class MultiWorld(DreamerEnv):
         # fixed_puck_goal = (-0.05, 0.5) # backward
         # fixed_hand_goal = (-0.1, 0.6)
         fixed_hand_goal = (-0.05, 0.6)
-        
+
         # Hand forward, object right
         fixed_puck_goal = (-0.1, 0.7)
         fixed_hand_goal = (0.0, 0.8)
         # Hand forward, object left
         fixed_puck_goal = (0.1, 0.7)
         fixed_hand_goal = (0.0, 0.8)
-        
+
         env = SawyerPushAndReachXYEasyEnv(**kwargs, randomize_goals=randomize_goals)
                                           # fixed_puck_goal=fixed_puck_goal,
                                           # fixed_hand_goal=fixed_hand_goal)
@@ -268,6 +268,7 @@ class MetaWorld(DreamerEnv):
     self._width = 64
     self._size = (self._width, self._width)
     self.env_rew_scale = env_rew_scale
+    self.rendered_goal = False
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
     if closeup:
@@ -310,6 +311,13 @@ class MetaWorld(DreamerEnv):
     elif frontview2:
       blox.mujoco.set_camera(
         self._offscreen.cam, azimuth=90, elevation=41 + 180, distance=0.61, lookat=[0., 0.55, 0.])
+    # elif v2:
+    #   self._offscreen.cam.azimuth = 120
+    #   self._offscreen.cam.elevation = -165
+    #   self._offscreen.cam.distance = 1.5
+    #   self._offscreen.cam.lookat[0] = 0.5
+    #   self._offscreen.cam.lookat[1] = 0
+    #   self._offscreen.cam.lookat[2] = 0
     else:
       self._offscreen.cam.azimuth = 205
       self._offscreen.cam.elevation = -165
@@ -318,7 +326,6 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[1] = 1.1
       self._offscreen.cam.lookat[2] = -0.1
 
-    self.rendered_goal = False
 
   def get_task_type(self, task):
     if 'Push' in task:
@@ -349,7 +356,7 @@ class MetaWorld(DreamerEnv):
         self._env.init_config['obj_init_pos'] = obj_init_pos
         # Initialize hand above object
         self._env.hand_init_pos = obj_init_pos
-        self._env.hand_init_pos[2] = 0.05 # np.random.uniform(0.05, 0.2)
+        self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2) # 0.05
     if self._rand_hand:
       self._env.hand_init_pos = np.random.uniform(
         self._env.hand_low,
@@ -417,7 +424,7 @@ class MultiTaskMetaWorld(MetaWorld):
       # Remove keys from name
       n = '_'.join([s for s in n.split('_') if s not in key_options])
       return keys, n
-    
+
     keys, name = parse(name)
     super().__init__(name, action_repeat)
 
@@ -439,7 +446,7 @@ class MultiTaskMetaWorld(MetaWorld):
       # else:
       #   self._goal_low = np.array(self._env.goal_space.low)
       #   self._goal_high = np.array(self._env.goal_space.high)
-  
+
   def reset(self):
     # TODO do I need this lock?
     # with self.LOCK:
@@ -458,7 +465,7 @@ class MultiTaskMetaWorld(MetaWorld):
       # self._env.data.site_xpos[self._env.model.site_name2id(site), 2] = (-1000)
       # self._env.data.site_xpos[self._env.model.site_name2id('goal_push'), 2] = (-1000)
       # self._env.data.site_xpos[self._env.model.site_name2id('goal_pick_place'), 2] = (-1000)
-  
+
   def _get_obs(self, state):
     obs = super()._get_obs(state)
     obs['image_goal'] = self.render_goal()['image']
