@@ -9,6 +9,9 @@ import gym
 import numpy as np
 from PIL import Image
 
+import blox
+import blox.mujoco
+
 if 'MUJOCO_RENDERER' in os.environ:
   RENDERER = os.environ['MUJOCO_RENDERER']
 else:
@@ -247,6 +250,7 @@ class MetaWorld(DreamerEnv):
     closeup = 'closeup' in task
     task = task.replace('_closeup', '')
     frontview = False
+    frontview2 = False
     self.task_type = self.get_task_type(task)
 
     self.v2 = v2 = 'V2' in task
@@ -286,27 +290,26 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 0.2
       self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
-    elif "SawyerHammerEnv" in task and "zoom" in domain:
-      # self._offscreen.cam.azimuth = 300
-      # self._offscreen.cam.elevation = -130
-      # self._offscreen.cam.distance = 0.8
-      # self._offscreen.cam.lookat[0] = 0.2
-      # self._offscreen.cam.lookat[1] = 0.65
-      # self._offscreen.cam.lookat[2] = -0.0
-      # Zoom
+    elif "SawyerHammerEnv" in task and "zoom1" in domain:
       self._offscreen.cam.azimuth = 220
       self._offscreen.cam.elevation = -140
       self._offscreen.cam.distance = 0.8
       self._offscreen.cam.lookat[0] = 0.2
       self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
+    elif "SawyerHammerEnv" in task and "zoom2" in domain:
+      self._offscreen.cam.azimuth = 300
+      self._offscreen.cam.elevation = -130
+      self._offscreen.cam.distance = 0.8
+      self._offscreen.cam.lookat[0] = 0.2
+      self._offscreen.cam.lookat[1] = 0.65
+      self._offscreen.cam.lookat[2] = -0.0
     elif frontview:
-      self._offscreen.cam.azimuth = 90
-      self._offscreen.cam.elevation = 22 + 180
-      self._offscreen.cam.distance = 0.82
-      self._offscreen.cam.lookat[0] = 0.
-      self._offscreen.cam.lookat[1] = 0.55
-      self._offscreen.cam.lookat[2] = 0.
+      blox.mujoco.set_camera(
+        self._offscreen.cam, azimuth=90, elevation=22 + 180, distance=0.82, lookat=[0., 0.55, 0.])
+    elif frontview2:
+      blox.mujoco.set_camera(
+        self._offscreen.cam, azimuth=90, elevation=41 + 180, distance=0.61, lookat=[0., 0.55, 0.])
     else:
       self._offscreen.cam.azimuth = 205
       self._offscreen.cam.elevation = -165

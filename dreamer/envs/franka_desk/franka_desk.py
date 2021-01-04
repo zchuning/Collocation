@@ -153,6 +153,8 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         else:
             # Sliding door. 0-0.6 is the max range
             self.data.qpos[40] = np.random.uniform(0, 0.3)
+            # TODO remove
+            self.data.qpos[40] = 0
             # self.data.qpos[40] = 0.6
             
             # Blocks

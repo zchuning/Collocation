@@ -182,6 +182,11 @@ class PointmassLong(mujoco_env.MujocoEnv, utils.EzPickle):
 
             self.reset_pose[0] = -0.5
             self.reset_pose[1] = 1.5
+            
+            # self.reset_pose[0] = -0.5
+            # # self.reset_pose[0] = 0.5
+            # self.reset_pose[1] = -1.5
+            # # self.reset_pose[1] = 0.
             # self.reset_pose[2] = 0 #object
             # self.reset_pose[3] = 0
         else:

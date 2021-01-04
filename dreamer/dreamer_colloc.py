@@ -18,6 +18,7 @@ import time
 tf.get_logger().setLevel('ERROR')
 
 from tensorflow_probability import distributions as tfd
+import tensorflow_probability as tfp
 
 sys.path.append(str(pathlib.Path(__file__).parent))
 
@@ -185,7 +186,7 @@ class DreamerColloc(Dreamer):
       plan_res = tf.reshape(plan, [hor+1, -1])
       feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
       plans.append(plan)
-      # act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
+      act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
       # Compute and record dynamics loss and reward
@@ -206,7 +207,7 @@ class DreamerColloc(Dreamer):
       metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
       # Record model rewards
-      model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
+      model_feats = self._dynamics.imagine_feat(act_preds_clipped[None, :], init_feat, deterministic=True)
       model_rew = self._reward(model_feats).mode()
       metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
@@ -226,6 +227,26 @@ class DreamerColloc(Dreamer):
         metrics.weighted_residual_actions.append(tf.reduce_sum(act_resw ** 2))
         metrics.weighted_residual_rewards.append(tf.reduce_sum(rew_resw ** 2))
 
+        # Record residual gradients
+        with tf.GradientTape(persistent=True) as tape:
+          tape.watch(plan)
+          dyn, act, rew = self.pair_residual_func_body(plan[0, :-1], plan[0, 1:], goal_feat, lam, nu, mu)[4:]
+
+          grad_dyn = tape.gradient(tf.reduce_sum(dyn ** 2), plan)
+          grad_act = tape.gradient(tf.reduce_sum(act ** 2), plan)
+          grad_rew = tape.gradient(tf.reduce_sum(rew ** 2), plan)
+
+          metrics._gradient_dynamics.append(tf.reduce_sum(grad_dyn ** 2))
+          metrics._gradient_actions.append(tf.reduce_sum(grad_act ** 2))
+          metrics._gradient_rewards.append(tf.reduce_sum(grad_rew ** 2))
+
+          metrics._correlation_gradient_dynamics.append(
+            tfp.stats.correlation(tf.reshape(-grad_dyn, -1), tf.reshape(plans[-1] - plans[-2], -1), event_axis=None))
+          metrics._correlation_gradient_actions.append(
+            tfp.stats.correlation(tf.reshape(-grad_act, -1), tf.reshape(plans[-1] - plans[-2], -1), event_axis=None))
+          metrics._correlation_gradient_rewards.append(
+            tfp.stats.correlation(tf.reshape(-grad_rew, -1), tf.reshape(plans[-1] - plans[-2], -1), event_axis=None))
+
       # Update lagrange multipliers
       # if (i + 1) % thresh_int == 0:
       #   dyn_threshold *= 0.1
@@ -241,10 +262,10 @@ class DreamerColloc(Dreamer):
         # if tf.reduce_sum(act_viol) / hor < act_threshold * self._c.hyst_ratio:
         #   nu = nu / self._c.lam_step
 
-        lam_step = 1.0 + 0.1 * tf.math.log((dyn_viol + 0.1 * dyn_threshold) / dyn_threshold) / tf.math.log(10.0)
-        nu_step  = 1.0 + 0.1 * tf.math.log((act_viol + 0.1 * act_threshold) / act_threshold) / tf.math.log(10.0)
-        lam = lam * lam_step
-        nu = nu * nu_step
+        lam_delta = lam * 0.1 * tf.math.log((dyn_viol + 0.1 * dyn_threshold) / dyn_threshold) / tf.math.log(10.0)
+        nu_delta  = nu * 0.1 * tf.math.log((act_viol + 0.1 * act_threshold) / act_threshold) / tf.math.log(10.0)
+        lam = lam + lam_delta #* self._c.lam_lr
+        nu = nu + nu_delta #* self._c.nu_lr
 
         # lam_step = 1.0 + 0.1 * tf.math.log(((dyn_loss / hor) + dyn_threshold) / (2.0 * dyn_threshold)) / tf.math.log(10.0)
         # nu_step  = 1.0 + 0.1 * tf.math.log(((act_loss / hor) + act_threshold) / (2.0 * act_threshold)) / tf.math.log(10.0)
@@ -254,6 +275,13 @@ class DreamerColloc(Dreamer):
         # mu = mu * mu_step
         # if tf.reduce_mean(1.0 / (rew_raw + 10000)) > rew_threshold:
         #   mu = mu * self._c.lam_step
+
+    # log_reward_distribution = log_extras
+    # if log_reward_distribution:
+    #   for i in range(20):
+    #     model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
+    #     model_rew = self._reward(model_feats).mode()
+    #     metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
     act_preds = act_preds[:min(hor, self._c.mpc_steps)]
     if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
