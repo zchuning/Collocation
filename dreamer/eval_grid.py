@@ -21,7 +21,6 @@ def assign_pm_obstacle(init_state, res):
     else:
         goal_dist = abs(goal_x - x) + abs(y - goal_y)
     interval = PM_OBSTACLE_MAX_GOAL_DIST / res
-    print(f'Goal dist {goal_dist}, interval {interval}, ind: {int(goal_dist % interval)}')
     return int(goal_dist / interval)
 
 
@@ -41,8 +40,6 @@ def generate_grid(filenames, assign_fn, res):
             episode = {k: episode[k] for k in episode.keys()}
         init_state = episode['state'][0]
         ind = assign_fn(init_state, res)
-        print(init_state)
-        print(episode['reward'])
         rews[ind] += episode['reward'].sum()
         frqs[ind] += 1
     # Avoid division by zero
