@@ -48,8 +48,8 @@ def generate_grid(filenames, assign_fn, res):
     return rews, frqs
 
 
-def plot_grid(rews, frqs, title, figdir):
-    plt.plot(rews)
+def plot_grid(rews, frqs, title, figdir, ymax):
+    plt.plot(np.linspace(0, ymax, len(rews)), rews)
     plt.title(title)
     plt.ylabel('Average rewards')
     plt.xlabel('Task difficulty')
@@ -64,13 +64,15 @@ def eval_grid(config):
     res = config.resolution
     if 'pm_obstacle_long' in task:
         assign_fn = assign_pm_obstacle
+        ymax = PM_OBSTACLE_MAX_GOAL_DIST
     elif 'SawyerPushEnv' in task:
         assign_fn = assign_mw_push
+        ymax = MW_PUSH_MAX_GOAL_DIST
     else:
         raise NotImplementedError(task)
 
     rews, frqs = generate_grid(filenames, assign_fn, res)
-    plot_grid(rews, frqs, f'[{config.planner}] {task}', config.figdir)
+    plot_grid(rews, frqs, f'[{config.planner}] {task}', config.figdir, ymax)
 
 
 if __name__ == '__main__':
