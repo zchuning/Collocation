@@ -25,6 +25,12 @@ class TBLogger(Logger):
     tf.summary.histogram(name, data)
     self.writer.flush()
 
+  def log_graph_hist(self, name, curves):
+    for curve_name, curve in curves.items():
+      self.log_graph(None, {curve_name: curve})
+      self.log_hist('h' + curve_name, curve)
+    self.writer.flush()
+
   def log_image(self, name, image):
     """
 

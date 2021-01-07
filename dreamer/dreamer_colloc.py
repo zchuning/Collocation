@@ -44,6 +44,7 @@ def define_config():
   config.gd_steps = 500
   config.gd_lr = 0.05
   config.gn_damping = 1e-3
+  config.n_parallel_plans = 1
   # Lagrange multipliers
   config.lam_int = 1
   config.lam_lr = 1
@@ -131,9 +132,9 @@ class DreamerColloc(Dreamer):
 
     # Compute coefficients
     # TODO redefine weights to not be square roots
-    dyn_c = tf.sqrt(lam)[:, None] * self._c.dyn_res_wt
-    act_c = tf.sqrt(nu)[:, None] * self._c.act_res_wt
-    rew_c = tf.sqrt(mu)[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
+    dyn_c = tf.sqrt(tf.reshape(lam, (-1,)))[:, None] * self._c.dyn_res_wt
+    act_c = tf.sqrt(tf.reshape(nu, (-1,)))[:, None] * self._c.act_res_wt
+    rew_c = tf.sqrt(tf.reshape(mu, (-1,)))[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
 
     normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
     objective = normalize * tf.concat([dyn_c * dyn_res, act_c * act_res, rew_c * rew_res], 1)
@@ -150,6 +151,7 @@ class DreamerColloc(Dreamer):
     hor = self._c.planning_horizon
     feat_size = self._c.stoch_size + self._c.deter_size
     var_len_step = feat_size + self._actdim
+    batch = self._c.n_parallel_plans
     coeff_upperbound = 1e10
     # thresh_steps = 5
     # thresh_int = self._c.gd_steps / thresh_steps
@@ -163,13 +165,14 @@ class DreamerColloc(Dreamer):
       goal_feat, _ = self.get_init_feat(goal_obs)
     else:
       goal_feat = None
-    plan = tf.random.normal(((hor + 1) * var_len_step,), dtype=self._float)
+    plan = tf.random.normal((batch, (hor + 1) * var_len_step,), dtype=self._float)
     # Set the first state to be the observed initial state
-    plan = tf.concat([init_feat[0], plan[feat_size:]], 0)
-    plan = tf.reshape(plan, [1, hor + 1, var_len_step])
-    lam = tf.ones(hor)
-    nu = tf.ones(hor)
-    mu = tf.ones(hor)
+    # TODO repeat
+    plan = tf.concat([tf.repeat(init_feat, batch, 0), plan[:, feat_size:]], 1)
+    plan = tf.reshape(plan, [batch, hor + 1, var_len_step])
+    lam = tf.ones((batch, hor))
+    nu = tf.ones((batch, hor))
+    mu = tf.ones((batch, hor))
 
     # Run second-order solver
     plans = [plan]
@@ -183,20 +186,20 @@ class DreamerColloc(Dreamer):
       # if (i + 1) % 10 == 0:
       #     plan = plan + tf.random.normal(plan.shape, 0.0, 0.01);
       #     # plan = plan + tf.random.uniform(plan.shape, -0.1, 0.1);
-      plan_res = tf.reshape(plan, [hor+1, -1])
-      feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 1)
+      plan_res = tf.reshape(plan, [batch, hor+1, -1])
+      feat_preds, act_preds = tf.split(plan_res, [feat_size, self._actdim], 2)
       plans.append(plan)
       act_preds_clipped = tf.clip_by_value(act_preds, -1, 1)
       # plan = tf.reshape(tf.concat([feat_preds, act_preds_clipped], -1), plan.shape)
 
       # Compute and record dynamics loss and reward
-      init_loss = tf.linalg.norm(feat_preds[0:1] - init_feat)
+      init_loss = tf.linalg.norm(feat_preds[:, 0] - init_feat)
       rew_raw = self._reward(feat_preds).mode()
-      states = self._dynamics.from_feat(feat_preds[None, :-1])
-      priors = self._dynamics.img_step(states, act_preds[None, :-1])
+      states = self._dynamics.from_feat(feat_preds[:, :-1])
+      priors = self._dynamics.img_step(states, act_preds[:, :-1])
       priors_feat = tf.squeeze(self._dynamics.get_mean_feat(priors))
-      dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[1:]), 1)
-      act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:-1]) - 1, 0, np.inf), 1)
+      dyn_viol = tf.reduce_sum(tf.square(priors_feat - feat_preds[:, 1:]), 2)
+      act_viol = tf.reduce_sum(tf.clip_by_value(tf.square(act_preds[:, :-1]) - 1, 0, np.inf), 2)
       # act_viol = tf.reduce_sum(tf.square(tf.clip_by_value(tf.abs(act_preds[:-1]) - 1, 0, np.inf)), 1)
 
       # Record losses and effective coefficients
@@ -207,13 +210,13 @@ class DreamerColloc(Dreamer):
       metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
       # Record model rewards
-      model_feats = self._dynamics.imagine_feat(act_preds_clipped[None, :], init_feat, deterministic=True)
-      model_rew = self._reward(model_feats).mode()
+      model_feats = self._dynamics.imagine_feat(act_preds_clipped[0:1], init_feat, deterministic=True)
+      model_rew = self._reward(model_feats[0:1]).mode()
       metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
       if log_extras:
         # Record model sample rewards
-        model_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=False)
+        model_feats = self._dynamics.imagine_feat(act_preds, init_feat, deterministic=False)
         model_rew = self._reward(model_feats).mode()
         metrics.model_sample_rewards.append(tf.reduce_sum(model_rew))
 
@@ -283,12 +286,18 @@ class DreamerColloc(Dreamer):
     #     model_rew = self._reward(model_feats).mode()
     #     metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
-    act_preds = act_preds[:min(hor, self._c.mpc_steps)]
+    # Select best plan
+    model_feats = self._dynamics.imagine_feat(act_preds_clipped, tf.repeat(init_feat, batch, 0), deterministic=True)
+    model_rew = tf.reduce_sum(self._reward(model_feats).mode(), [1])
+    best_plan = tf.argmax(model_rew)
+    print(f'plan rewards: {model_rew}, best plan: {best_plan}')
+
+    act_preds = act_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
       act_preds = tf.zeros_like(act_preds)
     imag_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
     predicted_rewards = tf.reduce_sum(self._reward(imag_feats).mode())
-    feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
+    feat_preds = feat_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if verbose:
       print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
       print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
@@ -426,7 +435,7 @@ def colloc_simulate(agent, config, env, save_images=True):
       else:
         act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
     elif pt == 'colloc_second_order':
-      act_pred, img_pred, feat_pred, info = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=True)
+      act_pred, img_pred, feat_pred, info = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=False)
     elif pt == 'colloc_second_order_goal':
       act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, i, log_extras=True)
     elif pt == 'colloc_second_order_goal_boundary':
@@ -530,10 +539,12 @@ def main(config):
 
   rew_meter, sp_rew_meter, pr_rew_meter = AverageMeter(), AverageMeter(), AverageMeter()
   tot_rews, tot_sp_rews, tot_pr_rews, tot_succ = [], [], [], 0
-  goal_dists = []
+  run_metrics = AttrDefaultDict(list)
   for i in range(config.eval_tasks):
     save_images = (i % 1 == 0) and config.visualize
-    tot_rew, tot_sp_rew, tot_pr_rew, succ, goal_dist = colloc_simulate(agent, config, env, save_images)
+    tot_rew, tot_sp_rew, tot_pr_rew, success, goal_dist = colloc_simulate(agent, config, env, save_images)
+    run_metrics.success.append(success)
+    run_metrics.goal_dist.append(goal_dist)
     rew_meter.update(tot_rew)
     tot_rews.append(tot_rew)
     pr_rew_meter.update(tot_pr_rew)
@@ -541,22 +552,22 @@ def main(config):
     if config.collect_sparse_reward:
       tot_sp_rews.append(tot_sp_rew)
       sp_rew_meter.update(tot_sp_rew)
-    tot_succ += succ
-    goal_dists.append(goal_dist)
+    tot_succ += success
   print(f'Average reward across {config.eval_tasks} tasks: {rew_meter.avg}')
   print(f'Average predicted reward across {config.eval_tasks} tasks: {pr_rew_meter.avg}')
   # print(f'Average goal distance across {config.eval_tasks} tasks: {tf.reduce_mean(goal_dists)}')
-  agent.logger.log_graph('total_reward', {'total_reward/dense': tot_rews})
+  agent.logger.log_graph_hist('total_reward', {'total_reward/dense': tot_rews})
   agent.logger.log_graph('reward_std', {'total_reward/dense_std': [np.std(tot_rews)]})
-  agent.logger.log_graph('total_predicted_reward', {'total_reward/pred': tot_pr_rews})
+  agent.logger.log_graph_hist('total_predicted_reward', {'total_reward/pred': tot_pr_rews})
   agent.logger.log_graph('predicted_reward_std', {'total_reward/pred_std': [np.std(tot_pr_rews)]})
   if config.collect_sparse_reward:
     print(f'Average sparse reward across {config.eval_tasks} tasks: {sp_rew_meter.avg}')
-    agent.logger.log_graph('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
+    agent.logger.log_graph_hist('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
     agent.logger.log_graph('sparse_reward_std', {'total_reward/sparse_std': [np.std(tot_sp_rews)]})
   print(f'Success rate: {tot_succ / config.eval_tasks}')
   agent.logger.log_graph('success_rate', {'total_reward/success': [tot_succ / config.eval_tasks]})
-  agent.logger.log_hist('total_reward/goal_dist', goal_dists)
+  agent.logger.log_hist('htotal_reward/success', run_metrics.success)
+  agent.logger.log_hist('htotal_reward/goal_dist', run_metrics.goal_dist)
   import pdb; pdb.set_trace()
 
 
