@@ -7,11 +7,31 @@ import sys
 from glob import glob
 from matplotlib import pyplot as plt
 
+## TODO: replace max_dist with the maximum among episodes
+
 MW_PUSH_MAX_GOAL_DIST = 1.0
+MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3])
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
+def get_task_config(task):
+    if 'pm_obstacle_long' in task:
+        assign_fn = assign_pm_obstacle
+        ymax = PM_OBSTACLE_MAX_GOAL_DIST
+        rew_key = 'reward'
+    elif 'SawyerPushEnv' in task:
+        assign_fn = assign_mw_push
+        ymax = MW_PUSH_MAX_GOAL_DIST
+        rew_key = 'success'
+    elif 'SawyerReachEnv' in task:
+        assign_fn = assign_mw_reach
+        ymax = MW_REACH_MAX_GOAL_DIST
+        rew_key = 'success'
+    else:
+        raise NotImplementedError(task)
+    return assign_fn, ymax, rew_key
 
-def assign_pm_obstacle(init_state, res):
+
+def assign_pm_obstacle(init_state, interval):
     # Assign to bin based on Manhattan distance
     goal_x, goal_y = 0.5, 1.5
     wall_y_min = -1
@@ -20,16 +40,32 @@ def assign_pm_obstacle(init_state, res):
         goal_dist = (goal_x - x) + abs(y - wall_y_min) + (goal_y - wall_y_min)
     else:
         goal_dist = abs(goal_x - x) + abs(y - goal_y)
-    interval = PM_OBSTACLE_MAX_GOAL_DIST / res
     return int(goal_dist / interval)
 
 
-def assign_mw_push(init_state, res):
+def assign_mw_push(init_state, interval):
     # Returns an integer index
     pass
 
 
-def generate_grid(filenames, assign_fn, res):
+def assign_mw_reach(init_state, interval):
+    hand_pos, _, goal_pos = np.split(init_state, 3)
+    goal_dist = np.linalg.norm(hand_pos - goal_pos)
+    return int(goal_dist / interval)
+
+
+def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
+    plt.title(title)
+    yaxis = np.linspace(0, ymax, len(rew_list[0]))
+    for rews, lbl in zip(rew_list, lbl_list):
+        plt.plot(yaxis, rews, label=lbl)
+    plt.legend()
+    plt.ylabel('Average rewards')
+    plt.xlabel('Task difficulty')
+    plt.savefig(figdir)
+
+
+def create_grid(filenames, assign_fn, res, ymax, rew_key):
     # Returns array of length <res>
     rews = np.zeros(res)
     frqs = np.zeros(res)
@@ -39,49 +75,40 @@ def generate_grid(filenames, assign_fn, res):
             episode = np.load(f)
             episode = {k: episode[k] for k in episode.keys()}
         init_state = episode['state'][0]
-        ind = assign_fn(init_state, res)
-        rews[ind] += episode['reward'].sum()
+        interval = ymax / res
+        ind = assign_fn(init_state, interval)
+        rews[ind] += episode[rew_key].sum()
         frqs[ind] += 1
     # Avoid division by zero
-    frqs[frqs == 0] = 1.0
-    rews = rews / frqs
+    mask = (frqs != 0)
+    rews[mask] = rews[mask] / frqs[mask]
     return rews, frqs
 
 
-def plot_grid(rews, frqs, title, figdir, ymax):
-    plt.plot(np.linspace(0, ymax, len(rews)), rews)
-    plt.title(title)
-    plt.ylabel('Average rewards')
-    plt.xlabel('Task difficulty')
-    plt.savefig(figdir)
-
-
 def eval_grid(config):
-    filenames = sorted(glob(f'{config.logdir}/episodes/*.npz'))
-    # Take the most recent episodes
-    filenames = filenames[-config.num_episodes:]
-    task = config.task
-    res = config.resolution
-    if 'pm_obstacle_long' in task:
-        assign_fn = assign_pm_obstacle
-        ymax = PM_OBSTACLE_MAX_GOAL_DIST
-    elif 'SawyerPushEnv' in task:
-        assign_fn = assign_mw_push
-        ymax = MW_PUSH_MAX_GOAL_DIST
-    else:
-        raise NotImplementedError(task)
-
-    rews, frqs = generate_grid(filenames, assign_fn, res)
-    plot_grid(rews, frqs, f'[{config.planner}] {task}', config.figdir, ymax)
+    task, res = config.task, config.resolution
+    assign_fn, ymax, rew_key = get_task_config(task)
+    rew_list, frq_list, lbl_list = [], [], []
+    for logdir, method in zip(config.logdirs, config.methods):
+        filenames = sorted(glob(f'{logdir}/episodes/*.npz'))
+        assert config.num_episodes <= len(filenames), \
+            'Inspected number of episodes greater than total number of episodes'
+        # Take the most recent episodes
+        filenames = filenames[-config.num_episodes:]
+        rews, frqs = create_grid(filenames, assign_fn, res, ymax, rew_key)
+        rew_list.append(rews)
+        frq_list.append(frqs)
+        lbl_list.append(method)
+    plot_grid(rew_list, frq_list, lbl_list, task, config.figdir, ymax)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     dir = lambda x: pathlib.Path(x).expanduser()
-    parser.add_argument('--num_episodes', type=int, default=100)
-    parser.add_argument('--logdir', type=dir, default='.')
+    parser.add_argument('--task', type=str, default='colloc_pm_obstacle_long')
+    parser.add_argument('--num_episodes', type=int, default=10)
     parser.add_argument('--figdir', type=dir, default='./out.jpg')
-    parser.add_argument('--task', type=str, default='colloc_pm_obstacle_long_w1.5')
-    parser.add_argument('--planner', type=str, default='')
     parser.add_argument('--resolution', type=int, default=10)
+    parser.add_argument('--logdirs', type=dir, default='', nargs='+')
+    parser.add_argument('--methods', type=str, default='', nargs='+')
     eval_grid(parser.parse_args())
