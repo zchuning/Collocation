@@ -287,7 +287,8 @@ class DreamerColloc(Dreamer):
     #     metrics.model_rewards.append(tf.reduce_sum(model_rew))
 
     # Select best plan
-    model_feats = self._dynamics.imagine_feat(act_preds_clipped, tf.repeat(init_feat, batch, 0), deterministic=True)
+    model_feats = self._dynamics.imagine_feat(act_preds_clipped, tf.repeat(init_feat, batch, 0), deterministic=False)
+    # TODO make deterministic
     model_rew = tf.reduce_sum(self._reward(model_feats).mode(), [1])
     best_plan = tf.argmax(model_rew)
     print(f'plan rewards: {model_rew}, best plan: {best_plan}')
@@ -310,7 +311,7 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)), 'plans': plans}
-    info["predicted_rewards"] = predicted_rewards
+    info["predicted_rewards"] = predicted_rewards.numpy()
     return act_preds, img_preds, feat_preds, info
 
   @tf.function()
@@ -536,38 +537,32 @@ def main(config):
   dreamer.setup(config, config.logdir_colloc)
   env = make_env(config)
   agent = build_agent(config, env)
-
-  rew_meter, sp_rew_meter, pr_rew_meter = AverageMeter(), AverageMeter(), AverageMeter()
-  tot_rews, tot_sp_rews, tot_pr_rews, tot_succ = [], [], [], 0
+  
   run_metrics = AttrDefaultDict(list)
   for i in range(config.eval_tasks):
+    print(f'------- Evaluating plan {i} of {config.eval_tasks}')
     save_images = (i % 1 == 0) and config.visualize
     tot_rew, tot_sp_rew, tot_pr_rew, success, goal_dist = colloc_simulate(agent, config, env, save_images)
+    run_metrics.reward_dense.append(tot_rew)
+    if config.collect_sparse_reward:
+      run_metrics.reward_sparse.append(tot_sp_rew)
+    run_metrics.reward_pred.append(tot_pr_rew)
     run_metrics.success.append(success)
     run_metrics.goal_dist.append(goal_dist)
-    rew_meter.update(tot_rew)
-    tot_rews.append(tot_rew)
-    pr_rew_meter.update(tot_pr_rew)
-    tot_pr_rews.append(tot_pr_rew)
-    if config.collect_sparse_reward:
-      tot_sp_rews.append(tot_sp_rew)
-      sp_rew_meter.update(tot_sp_rew)
-    tot_succ += success
-  print(f'Average reward across {config.eval_tasks} tasks: {rew_meter.avg}')
-  print(f'Average predicted reward across {config.eval_tasks} tasks: {pr_rew_meter.avg}')
-  # print(f'Average goal distance across {config.eval_tasks} tasks: {tf.reduce_mean(goal_dists)}')
-  agent.logger.log_graph_hist('total_reward', {'total_reward/dense': tot_rews})
-  agent.logger.log_graph('reward_std', {'total_reward/dense_std': [np.std(tot_rews)]})
-  agent.logger.log_graph_hist('total_predicted_reward', {'total_reward/pred': tot_pr_rews})
-  agent.logger.log_graph('predicted_reward_std', {'total_reward/pred_std': [np.std(tot_pr_rews)]})
+    
+  print(f'------- Finished {config.eval_tasks}')
+  log_keys = ['reward_dense', 'reward_pred', 'success', 'goal_dist']
   if config.collect_sparse_reward:
-    print(f'Average sparse reward across {config.eval_tasks} tasks: {sp_rew_meter.avg}')
-    agent.logger.log_graph_hist('total_sparse_reward', {'total_reward/sparse': tot_sp_rews})
-    agent.logger.log_graph('sparse_reward_std', {'total_reward/sparse_std': [np.std(tot_sp_rews)]})
-  print(f'Success rate: {tot_succ / config.eval_tasks}')
-  agent.logger.log_graph('success_rate', {'total_reward/success': [tot_succ / config.eval_tasks]})
-  agent.logger.log_hist('htotal_reward/success', run_metrics.success)
-  agent.logger.log_hist('htotal_reward/goal_dist', run_metrics.goal_dist)
+    log_keys = log_keys + ['reward_sparse']
+  
+  for key in log_keys:
+    save_key = 'total_reward/' + key.replace('reward_', '')
+    print(f'Average {key}: {np.mean(run_metrics[key])}')
+    agent.logger.log_graph_hist(None, {save_key: run_metrics[key]})
+    agent.logger.log_graph(None, {save_key + '_std': [np.std(run_metrics[key])]})
+    agent.logger.log_graph(None, {save_key + '_mean': [np.mean(run_metrics[key])]})
+  
+  agent.logger.log_scatter('obtained_predicted_reward', np.stack([run_metrics.reward_sparse, run_metrics.reward_pred], 0))
   import pdb; pdb.set_trace()
 
 

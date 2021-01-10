@@ -1,8 +1,12 @@
 import imageio
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
+from PIL import Image
 
 from utils import tools
+import blox
+import blox.logging
 
 
 class Logger():
@@ -58,6 +62,20 @@ class TBLogger(Logger):
     tools.video_summary(name, video)
     # tools.graph_summary(self.writer, tools.video_summary, name, video)
     self.writer.flush()
+    
+  def log_scatter(self, name, data):
+    height=400
+    width=400
+    dpi=10
+    fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+    plt.xticks(fontsize=100)
+    plt.yticks(fontsize=100)
+    plt.scatter(data[0], data[1], lw=30)
+    plt.grid()
+    plt.tight_layout()
+    fig_img = blox.logging.fig2img(fig)
+    plt.close(fig)
+    self.log_image(name, fig_img - 0.5)
 
 
 class DiskLogger(Logger):
