@@ -9,8 +9,8 @@ from matplotlib import pyplot as plt
 
 ## TODO: replace max_dist with the maximum among episodes
 
-MW_PUSH_MAX_GOAL_DIST = np.linalg.norm([0.2, 0.2]) + 0.2
-MW_REACH_MAX_GOAL_DIST = 1.5 * np.linalg.norm([0.6, 0.4, 0.3])
+MW_PUSH_MAX_GOAL_DIST = 1.2 # np.linalg.norm([0.2, 0.2]) + 0.2
+MW_REACH_MAX_GOAL_DIST = 1.2 # 1.5 * np.linalg.norm([0.6, 0.4, 0.3])
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
 def get_task_config(task):
@@ -66,7 +66,7 @@ def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
         plt.plot(bins, rews, label=lbl)
     plt.legend()
     plt.ylabel('Success rate')
-    plt.xlabel('Task difficulty')
+    plt.xlabel('Goal distance')
     plt.savefig(figdir)
 
 
