@@ -9,8 +9,8 @@ from matplotlib import pyplot as plt
 
 ## TODO: replace max_dist with the maximum among episodes
 
-MW_PUSH_MAX_GOAL_DIST = 1.0
-MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3])
+MW_PUSH_MAX_GOAL_DIST = np.linalg.norm([0.2, 0.2]) + 0.2
+MW_REACH_MAX_GOAL_DIST = 1.5 * np.linalg.norm([0.6, 0.4, 0.3])
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
 def get_task_config(task):
@@ -21,11 +21,11 @@ def get_task_config(task):
     elif 'SawyerPushEnv' in task:
         assign_fn = assign_mw_push
         ymax = MW_PUSH_MAX_GOAL_DIST
-        rew_key = 'success'
+        rew_key = 'sparse_reward'
     elif 'SawyerReachEnv' in task:
         assign_fn = assign_mw_reach
         ymax = MW_REACH_MAX_GOAL_DIST
-        rew_key = 'success'
+        rew_key = 'sparse_reward'
     else:
         raise NotImplementedError(task)
     return assign_fn, ymax, rew_key
@@ -45,22 +45,27 @@ def assign_pm_obstacle(init_state, interval):
 
 def assign_mw_push(init_state, interval):
     # Returns an integer index
-    pass
+    hand_pos, obj_pos, _, goal_pos = np.split(init_state, 4)
+    reach_dist = np.linalg.norm(hand_pos - obj_pos)
+    push_dist = np.linalg.norm(obj_pos[:2] - goal_pos[:2])
+    goal_dist = reach_dist + push_dist
+    return int(goal_dist / interval)
 
 
 def assign_mw_reach(init_state, interval):
-    hand_pos, _, goal_pos = np.split(init_state, 3)
+    hand_pos, _, goal_pos = np.split(init_state, [3, 9])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
     return int(goal_dist / interval)
 
 
 def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
+    # rew_list, frq_list, lbl_list: n * resolution
     plt.title(title)
-    yaxis = np.linspace(0, ymax, len(rew_list[0]))
+    bins = np.linspace(0, ymax, len(rew_list[0]))
     for rews, lbl in zip(rew_list, lbl_list):
-        plt.plot(yaxis, rews, label=lbl)
+        plt.plot(bins, rews, label=lbl)
     plt.legend()
-    plt.ylabel('Average rewards')
+    plt.ylabel('Success rate')
     plt.xlabel('Task difficulty')
     plt.savefig(figdir)
 
@@ -77,7 +82,7 @@ def create_grid(filenames, assign_fn, res, ymax, rew_key):
         init_state = episode['state'][0]
         interval = ymax / res
         ind = assign_fn(init_state, interval)
-        rews[ind] += episode[rew_key].sum()
+        rews[ind] += float(episode[rew_key].sum() > 0)
         frqs[ind] += 1
     # Avoid division by zero
     mask = (frqs != 0)
@@ -111,4 +116,5 @@ if __name__ == '__main__':
     parser.add_argument('--resolution', type=int, default=10)
     parser.add_argument('--logdirs', type=dir, default='', nargs='+')
     parser.add_argument('--methods', type=str, default='', nargs='+')
-    eval_grid(parser.parse_args())
+    config = parser.parse_args()
+    eval_grid(config)
