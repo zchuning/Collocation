@@ -562,7 +562,9 @@ def main(config):
     agent.logger.log_graph(None, {save_key + '_std': [np.std(run_metrics[key])]})
     agent.logger.log_graph(None, {save_key + '_mean': [np.mean(run_metrics[key])]})
   
-  agent.logger.log_scatter('obtained_predicted_reward', np.stack([run_metrics.reward_sparse, run_metrics.reward_pred], 0))
+  agent.logger.log_scatter(
+    'obtained_predicted_reward', np.stack([run_metrics.reward_sparse, run_metrics.reward_pred], 0))
+  with (config.logdir_colloc / 'eval_data.pkl').open('wb') as f: pickle.dump(dict(run_metrics), f)
   import pdb; pdb.set_trace()
 
 
