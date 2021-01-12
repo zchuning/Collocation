@@ -308,13 +308,8 @@ class DreamerColloc(Dreamer):
     act_preds = act_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
       act_preds = tf.zeros_like(act_preds)
-<<<<<<< HEAD
     feat_preds = feat_preds[best_plan, :min(hor, self._c.mpc_steps)]
-    if verbose:
-=======
-    feat_preds = feat_preds[:min(hor, self._c.mpc_steps)]
     if verbose and self._c.log_colloc_scalars:
->>>>>>> Fix collocation metrics
       print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
       print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
       print(f"Final total reward: {metrics.rewards[-1]}")
