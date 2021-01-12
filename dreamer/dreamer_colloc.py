@@ -112,6 +112,7 @@ class DreamerColloc(Dreamer):
 
   def pair_residual_func_body(self, x_a, x_b, goal,
       lam=np.ones(1, np.float32), nu=np.ones(1, np.float32), mu=np.ones(1, np.float32)):
+    # Compute residuals
     actions_a = x_a[:, -self._actdim:][None]
     feats_a = x_a[:, :-self._actdim][None]
     states_a = self._dynamics.from_feat(feats_a)
@@ -123,7 +124,7 @@ class DreamerColloc(Dreamer):
     if self._c.ssq_reward:
       rew_res = self._reward.get_residual(x_b[:, :-self._actdim])
     else:
-      rew = self._reward(x_b[:, :-self._actdim]).mode()
+      rew = self._reward(x_b[:, :-self._actdim]).mode()[:, None]
       rew_res = tf.math.softplus(-rew) # 1.0 - tf.math.sigmoid(rew) # tf.math.softplus(-rew) # -tf.math.log_sigmoid(rew) # Softplus
     # rew_res = rew_c * (1.0 - tf.math.sigmoid(rew)) # Sigmoid
     # rew_res = rew_c * (1.0 / (rew + 10000))[:, None] # Inverse
@@ -132,13 +133,19 @@ class DreamerColloc(Dreamer):
 
     # Compute coefficients
     # TODO redefine weights to not be square roots
-    dyn_c = tf.sqrt(tf.reshape(lam, (-1,)))[:, None] * self._c.dyn_res_wt
-    act_c = tf.sqrt(tf.reshape(nu, (-1,)))[:, None] * self._c.act_res_wt
-    rew_c = tf.sqrt(tf.reshape(mu, (-1,)))[:, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
+    dyn_c = tf.sqrt(lam)[:, :, None] * self._c.dyn_res_wt
+    act_c = tf.sqrt(nu)[:, :, None] * self._c.act_res_wt
+    rew_c = tf.sqrt(mu)[:, :, None] * tf.cast(self._c.rew_res_wt, act_c.dtype)
 
-    normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c) + tf.reduce_mean(act_c) + tf.reduce_mean(rew_c))
-    objective = normalize * tf.concat([dyn_c * dyn_res, act_c * act_res, rew_c * rew_res], 1)
-    return objective, dyn_res, act_res, rew_res, dyn_c * dyn_res, act_c * act_res, rew_c * rew_res
+    # Normalize each plan in the batch independently
+    bs, n = nu.shape[0:2]
+    normalize = self._c.coeff_normalization / (tf.reduce_mean(dyn_c, 1) + tf.reduce_mean(act_c, 1) + tf.reduce_mean(rew_c, 1))
+    objective = normalize[:, :, None] * tf.concat([dyn_c * tf.reshape(dyn_res, (bs, n, -1)),
+                                                   act_c * tf.reshape(act_res, (bs, n, -1)),
+                                                   rew_c * tf.reshape(rew_res, (bs, n, -1))], 2)
+
+    # return objective, dyn_res, act_res, rew_res, dyn_c * dyn_res, act_c * act_res, rew_c * rew_res
+    return tf.reshape(objective, (-1, objective.shape[2])), dyn_res, act_res, rew_res, None, None, None
 
   @tf.function
   def opt_step(self, plan, init_feat, goal_feat, lam, nu, mu):
