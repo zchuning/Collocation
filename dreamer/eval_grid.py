@@ -9,7 +9,9 @@ from matplotlib import pyplot as plt
 
 ## TODO: replace max_dist with the maximum among episodes
 
-MW_PUSH_MAX_GOAL_DIST = np.linalg.norm([0.2, 0.2]) + 0.2 # 1.2
+MW_PUSH_MAX_HAND_HEIGHT = 0.2
+MW_PUSH_MAX_OBJ_DIST = np.linalg.norm([0.2, 0.2])
+MW_PUSH_MAX_GOAL_DIST = MW_PUSH_MAX_OBJ_DIST + MW_PUSH_MAX_HAND_HEIGHT
 MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3]) # 1.2
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
@@ -19,8 +21,15 @@ def get_task_config(task):
         ymax = PM_OBSTACLE_MAX_GOAL_DIST
         rew_key = 'reward'
     elif 'SawyerPushEnv' in task:
-        assign_fn = assign_mw_push
-        ymax = MW_PUSH_MAX_GOAL_DIST
+        if 'hand' in task:
+            assign_fn = assign_mw_push_hand
+            ymax = MW_PUSH_MAX_HAND_HEIGHT
+        elif 'obj' in task:
+            assign_fn = assign_mw_push_obj
+            ymax = MW_PUSH_MAX_OBJ_DIST
+        else:
+            assign_fn = assign_mw_push
+            ymax = MW_PUSH_MAX_GOAL_DIST
         rew_key = 'sparse_reward'
     elif 'SawyerReachEnv' in task:
         assign_fn = assign_mw_reach
@@ -31,7 +40,7 @@ def get_task_config(task):
     return assign_fn, ymax, rew_key
 
 
-def assign_pm_obstacle(init_state, interval):
+def assign_pm_obstacle(init_state):
     # Assign to bin based on Manhattan distance
     goal_x, goal_y = 0.5, 1.5
     wall_y_min = -1
@@ -40,24 +49,39 @@ def assign_pm_obstacle(init_state, interval):
         goal_dist = (goal_x - x) + abs(y - wall_y_min) + (goal_y - wall_y_min)
     else:
         goal_dist = abs(goal_x - x) + abs(y - goal_y)
-    return int(goal_dist / interval)
+    return goal_dist
 
 
-def assign_mw_push(init_state, interval):
+def assign_mw_push_hand(init_state):
     # Returns an integer index
-    hand_pos, obj_pos, _, goal_pos = np.split(init_state, 4)
+    hand_pos, _, _, _ = np.split(init_state, 4)
+    hand_height = hand_pos[2]
+    return hand_height
+
+
+def assign_mw_push_obj(init_state):
+    # Returns an integer index
+    _, obj_pos, _, _ = np.split(init_state, 4)
+    goal_pos = np.array([0.1, 0.8, 0.02])
+    obj_dist = np.linalg.norm(obj_pos[:2] - goal_pos[:2])
+    return obj_dist
+
+
+def assign_mw_push(init_state):
+    # Returns an integer index
+    hand_pos, obj_pos, _, _ = np.split(init_state, 4)
     goal_pos = np.array([0.1, 0.8, 0.02])
     reach_dist = np.linalg.norm(hand_pos - obj_pos)
     push_dist = np.linalg.norm(obj_pos[:2] - goal_pos[:2])
     goal_dist = reach_dist + push_dist
-    return int(goal_dist / interval)
+    return goal_dist
 
 
-def assign_mw_reach(init_state, interval):
+def assign_mw_reach(init_state):
     hand_pos, _, goal_pos = np.split(init_state, [3, 9])
     goal_pos = np.array([-0.1, 0.8, 0.2])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
-    return int(goal_dist / interval)
+    return goal_dist
 
 
 def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
@@ -82,10 +106,11 @@ def create_grid(filenames, assign_fn, res, ymax, rew_key):
             episode = np.load(f)
             episode = {k: episode[k] for k in episode.keys()}
         init_state = episode['state'][0]
+        difficulty = assign_fn(init_state)
         interval = ymax / res
-        ind = assign_fn(init_state, interval)
-        rews[ind] += float(episode[rew_key].sum() > 0)
-        frqs[ind] += 1
+        index = int(difficulty / interval)
+        rews[index] += float(episode[rew_key].sum() > 0)
+        frqs[index] += 1
     # Avoid division by zero
     mask = (frqs != 0)
     rews[mask] = rews[mask] / frqs[mask]
