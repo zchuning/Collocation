@@ -14,6 +14,7 @@ from blox.utils import AverageMeter, timing
 from blox.basic_types import map_dict
 from blox import AttrDefaultDict
 import time
+import pickle
 
 tf.get_logger().setLevel('ERROR')
 
@@ -67,6 +68,7 @@ def define_config():
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
   config.eval_tasks = 1
+  config.eval_store_episodes = True
   # Goal-conditioned
   config.goal_based = False
   config.goal_distance = 'latent'
@@ -403,8 +405,13 @@ class DreamerColloc(Dreamer):
 def make_env(config):
   env = make_bare_env(config)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
+  if config.eval_store_episodes:
+    datadir = config.logdir_colloc / 'eval_episodes'
+    callbacks = [lambda ep: tools.save_episodes(datadir, [ep])]
+    env = wrappers.Collect(env, callbacks, config.precision, config.collect_sparse_reward)
   env = wrappers.RewardObs(env)
   return env
+
 
 def get_goal(env, config):
   # Obtain goal observation for goal-based collocation
