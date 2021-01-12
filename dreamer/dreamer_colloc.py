@@ -300,7 +300,8 @@ class DreamerColloc(Dreamer):
     # TODO make deterministic
     model_rew = tf.reduce_sum(self._reward(model_feats).mode(), [1])
     best_plan = tf.argmax(model_rew)
-    print(f'plan rewards: {model_rew}, best plan: {best_plan}')
+    if batch > 1:
+      print(f'plan rewards: {model_rew}, best plan: {best_plan}')
 
     act_preds = act_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if tf.reduce_any(tf.math.is_nan(act_preds)) or tf.reduce_any(tf.math.is_inf(act_preds)):
@@ -469,6 +470,8 @@ def colloc_simulate(agent, config, env, save_images=True):
     # Accumulate predicted reward
     if info is not None and 'predicted_rewards' in info:
       total_predicted_reward += info['predicted_rewards']
+    elif info is not None and 'metrics' in info:
+      total_predicted_reward += info['metrics']['rewards']
     # Simluate in environment
     act_pred_np = act_pred.numpy()
     for j in range(len(act_pred_np)):
