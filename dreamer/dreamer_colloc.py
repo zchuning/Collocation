@@ -467,7 +467,7 @@ def colloc_simulate(agent, config, env, save_images=True):
     else:
       act_pred, img_pred, feat_pred, _ = agent._plan(obs, goal_obs, save_images, i, log_extras=True)
     # Accumulate predicted reward
-    if info is not None:
+    if info is not None and 'predicted_rewards' in info:
       total_predicted_reward += info['predicted_rewards']
     # Simluate in environment
     act_pred_np = act_pred.numpy()
@@ -519,7 +519,13 @@ def build_agent(config, env):
   actspace = env.action_space
   datadir = config.logdir / 'episodes'
 
-  if config.planning_task == 'colloc_cem':
+  if config.planning_task == 'shooting_cem':
+    from planners.shooting_cem import ShootingCEMAgent
+    agent = ShootingCEMAgent(config, datadir, actspace)
+  elif config.planning_task == 'shooting_gd':
+    from planners.shooting_gd import ShootingGDAgent
+    agent = ShootingGDAgent(config, datadir, actspace)
+  elif config.planning_task == 'colloc_cem':
     from planners.colloc_cem import CollocCEMAgent
     agent = CollocCEMAgent(config, datadir, actspace)
   elif config.planning_task == 'colloc_gd':
