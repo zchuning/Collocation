@@ -9,8 +9,8 @@ from matplotlib import pyplot as plt
 
 ## TODO: replace max_dist with the maximum among episodes
 
-MW_PUSH_MAX_GOAL_DIST = 1.2 # np.linalg.norm([0.2, 0.2]) + 0.2
-MW_REACH_MAX_GOAL_DIST = 1.2 # 1.5 * np.linalg.norm([0.6, 0.4, 0.3])
+MW_PUSH_MAX_GOAL_DIST = np.linalg.norm([0.2, 0.2]) + 0.2 # 1.2
+MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3]) # 1.2
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
 def get_task_config(task):
@@ -46,6 +46,7 @@ def assign_pm_obstacle(init_state, interval):
 def assign_mw_push(init_state, interval):
     # Returns an integer index
     hand_pos, obj_pos, _, goal_pos = np.split(init_state, 4)
+    goal_pos = np.array([0.1, 0.8, 0.02])
     reach_dist = np.linalg.norm(hand_pos - obj_pos)
     push_dist = np.linalg.norm(obj_pos[:2] - goal_pos[:2])
     goal_dist = reach_dist + push_dist
@@ -54,6 +55,7 @@ def assign_mw_push(init_state, interval):
 
 def assign_mw_reach(init_state, interval):
     hand_pos, _, goal_pos = np.split(init_state, [3, 9])
+    goal_pos = np.array([-0.1, 0.8, 0.2])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
     return int(goal_dist / interval)
 
