@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 ## TODO: replace max_dist with the maximum among episodes
 
 MW_PUSH_MAX_HAND_HEIGHT = 0.2
-MW_PUSH_MAX_OBJ_DIST = np.linalg.norm([0.2, 0.2])
+MW_PUSH_MAX_OBJ_DIST = 0.25 # np.linalg.norm([0.2, 0.2])
 MW_PUSH_MAX_GOAL_DIST = MW_PUSH_MAX_OBJ_DIST + MW_PUSH_MAX_HAND_HEIGHT
 MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3]) # 1.2
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
@@ -61,7 +61,8 @@ def assign_mw_push_hand(init_state):
 
 def assign_mw_push_obj(init_state):
     # Returns an integer index
-    _, obj_pos, _, _ = np.split(init_state, 4)
+    #_, obj_pos, _, _ = np.split(init_state, 4)
+    obj_pos = init_state[3:6]
     goal_pos = np.array([0.1, 0.8, 0.02])
     obj_dist = np.linalg.norm(obj_pos[:2] - goal_pos[:2])
     return obj_dist
@@ -78,7 +79,8 @@ def assign_mw_push(init_state):
 
 
 def assign_mw_reach(init_state):
-    hand_pos, _, goal_pos = np.split(init_state, [3, 9])
+    # hand_pos, _, goal_pos = np.split(init_state, [3, 9])
+    hand_pos = init_state[:3]
     goal_pos = np.array([-0.1, 0.8, 0.2])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
     return goal_dist
@@ -86,14 +88,35 @@ def assign_mw_reach(init_state):
 
 def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
     # rew_list, frq_list, lbl_list: n * resolution
+    # Cut off 0-frequency bins from the left
+    cutoff = -1
+    for i, frq_each in enumerate(zip(*frq_list)):
+        if all(frq_each):
+            cutoff = i
+            break
+    print(f'Cutoff : {cutoff}')
+
+    # Plot success rates
+    plt.figure(0)
     plt.title(title)
     bins = np.linspace(0, ymax, len(rew_list[0]))
     for rews, lbl in zip(rew_list, lbl_list):
-        plt.plot(bins, rews, label=lbl)
+        plt.plot(bins[cutoff:], rews[cutoff:], label=lbl)
     plt.legend()
     plt.ylabel('Success rate')
     plt.xlabel('Goal distance')
     plt.savefig(figdir)
+
+    # Plot frequencies
+    plt.figure(1)
+    plt.title(title)
+    bins = np.linspace(0, ymax, len(frq_list[0]))
+    for frqs, lbl in zip(frq_list, lbl_list):
+        plt.plot(bins[cutoff:], frqs[cutoff:], label=lbl)
+    plt.legend()
+    plt.ylabel('Frequency')
+    plt.xlabel('Goal distance')
+    plt.savefig(figdir.parent / (figdir.name[:-4] + '_frq.jpg'))
 
 
 def create_grid(filenames, assign_fn, res, ymax, rew_key):
@@ -109,6 +132,9 @@ def create_grid(filenames, assign_fn, res, ymax, rew_key):
         difficulty = assign_fn(init_state)
         interval = ymax / res
         index = int(difficulty / interval)
+        if index >= res:
+            print('Omitting out-of-bound initialization')
+            continue
         rews[index] += float(episode[rew_key].sum() > 0)
         frqs[index] += 1
     # Avoid division by zero
