@@ -17,6 +17,7 @@ class TBLogger(Logger):
   def __init__(self, dir):
     writer = tf.summary.create_file_writer(str(dir), max_queue=1000, flush_millis=20000)
     writer.set_as_default()
+    self.dir = dir
     self.writer = writer
 
   def log_graph(self, name, curves):

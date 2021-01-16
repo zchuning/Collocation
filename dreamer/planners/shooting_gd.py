@@ -52,7 +52,7 @@ class ShootingGDAgent(DreamerColloc):
       print(f"Final average reward: {rewards[-1] / horizon}")
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
-      img_pred = self._decode(feat_pred[:min(horizon, mpc_steps)]).mode()
+      img_pred = self._decode(feat_pred[[best_plan], :min(horizon, mpc_steps)]).mode()
       import matplotlib.pyplot as plt
       plt.title("Reward Curve")
       plt.plot(range(len(rewards)), rewards)
