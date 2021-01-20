@@ -48,11 +48,11 @@ class ShootingGDAgent(DreamerColloc):
     feat_pred = feats
     curves = dict(rewards=rewards, action_violation=act_loss)
     if verbose:
-      print(f"Final average action violation: {act_loss[-1] / horizon}")
-      print(f"Final average reward: {rewards[-1] / horizon}")
+      print(f"Planned average action violation: {act_loss[-1] / horizon}")
+      print(f"Planned total reward: {reward[best_plan]}")
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in curves.items()})
     if self._c.visualize:
-      img_pred = self._decode(feat_pred[[best_plan], :min(horizon, mpc_steps)]).mode()
+      img_pred = self._decode(feat_pred[best_plan, :min(horizon, mpc_steps)][None]).mode()
       import matplotlib.pyplot as plt
       plt.title("Reward Curve")
       plt.plot(range(len(rewards)), rewards)
@@ -61,4 +61,4 @@ class ShootingGDAgent(DreamerColloc):
     else:
       img_pred = None
     return act_pred, img_pred, feat_pred, {'metrics': map_dict(lambda x: x[-1] / horizon, curves),
-                                           'predicted_rewards': tf.reduce_max(reward)}
+                                           'predicted_rewards': reward[best_plan]}

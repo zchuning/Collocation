@@ -310,10 +310,10 @@ class DreamerColloc(Dreamer):
     predicted_rewards = tf.reduce_sum(self._reward(imag_feats).mode())
     feat_preds = feat_preds[best_plan, :min(hor, self._c.mpc_steps)]
     if verbose:
-      print(f"Final average dynamics loss: {metrics.dynamics[-1] / hor}")
-      print(f"Final average action violation: {metrics.action_violation[-1] / hor}")
-      print(f"Final total reward: {metrics.rewards[-1]}")
-      print(f"Final average initial state violation: {init_loss}")
+      print(f"Planned average dynamics loss: {metrics.dynamics[-1] / hor}")
+      print(f"Planned average action violation: {metrics.action_violation[-1] / hor}")
+      print(f"Planned total reward: {metrics.rewards[-1]}")
+      print(f"Planned average initial state violation: {init_loss}")
     if save_images:
       img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in metrics.items()})
@@ -435,38 +435,38 @@ def colloc_simulate(agent, config, env, save_images=True):
   obs['image'] = [obs['image']]
   goal_obs = get_goal(env, config)
 
-  num_iter = config.time_limit // config.action_repeat
+  ep_length = config.time_limit // config.action_repeat
   img_preds, act_preds, frames = [], [], []
   total_reward, total_sparse_reward, total_predicted_reward = 0, 0, 0
   start = time.time()
-  for i in range(0, num_iter, config.mpc_steps):
+  for t in range(0, ep_length, config.mpc_steps):
     info = None
-    print("Planning step {0} of {1}".format(i + 1, num_iter))
+    print("Planning step {0} of {1}".format(t + 1, ep_length))
     # Run single planning step
     if pt == 'colloc_cem':
       act_pred, img_pred = agent.collocation_cem(obs)
     elif pt == 'colloc_gd':
       if config.inverse_model:
-        act_pred, img_pred, feat_pred = agent.collocation_gd_inverse_model(obs, save_images, i)
+        act_pred, img_pred, feat_pred = agent.collocation_gd_inverse_model(obs, save_images, t)
       else:
-        act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, i)
+        act_pred, img_pred, feat_pred = agent.collocation_gd(obs, save_images, t)
     elif pt == 'colloc_second_order':
-      act_pred, img_pred, feat_pred, info = agent.collocation_so(obs, goal_obs, save_images, i, log_extras=False)
+      act_pred, img_pred, feat_pred, info = agent.collocation_so(obs, goal_obs, save_images, t, log_extras=False)
     elif pt == 'colloc_second_order_goal':
-      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, i, log_extras=True)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal(obs, goal_obs, save_images, t, log_extras=True)
     elif pt == 'colloc_second_order_goal_boundary':
-      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal_boundary(obs, goal_obs, save_images, i)
+      act_pred, img_pred, feat_pred, _ = agent.collocation_so_goal_boundary(obs, goal_obs, save_images, t)
     elif pt == 'colloc_gd_goal':
       act_pred, img_pred = agent.collocation_goal_gd(obs, goal_obs, 'gd')
     elif pt == 'shooting_cem':
-      act_pred, img_pred, feat_pred, info = agent.shooting_cem(obs, i)
+      act_pred, img_pred, feat_pred, info = agent.shooting_cem(obs, t)
     elif pt == 'shooting_gd':
-      act_pred, img_pred, feat_pred, info = agent.shooting_gd(obs, i)
+      act_pred, img_pred, feat_pred, info = agent.shooting_gd(obs, t)
     elif pt == 'random':
       act_pred = tf.random.uniform((config.mpc_steps,) + actspace.shape, actspace.low[0], actspace.high[0])
       img_pred = None
     else:
-      act_pred, img_pred, feat_pred, _ = agent._plan(obs, goal_obs, save_images, i, log_extras=True)
+      act_pred, img_pred, feat_pred, _ = agent._plan(obs, goal_obs, save_images, t, log_extras=True)
     # Accumulate predicted reward
     if info is not None and 'predicted_rewards' in info:
       total_predicted_reward += info['predicted_rewards']
@@ -474,8 +474,8 @@ def colloc_simulate(agent, config, env, save_images=True):
       total_predicted_reward += info['metrics']['rewards']
     # Simluate in environment
     act_pred_np = act_pred.numpy()
-    for j in range(len(act_pred_np)):
-      obs, reward, done, info = env.step(act_pred_np[j])
+    for i in range(min(len(act_pred_np), ep_length - t)):
+      obs, reward, done, info = env.step(act_pred_np[i])
       total_reward += reward
       if 'success' in info:
         total_sparse_reward += info['success'] # float(info['goalDist'] < 0.15)
@@ -485,8 +485,8 @@ def colloc_simulate(agent, config, env, save_images=True):
     act_preds.append(act_pred_np)
     if img_pred is not None:
       img_preds.append(img_pred.numpy())
-      agent.logger.log_video(f"plan/{i}", img_pred.numpy())
-    agent.logger.log_video(f"execution/{i}", frames[-len(act_pred_np):])
+      agent.logger.log_video(f"plan/{t}", img_pred.numpy())
+    agent.logger.log_video(f"execution/{t}", frames[-len(act_pred_np):])
   end = time.time()
   if 'goalDist' in info and info['goalDist'] is not None:
     goal_dist = info['goalDist']
