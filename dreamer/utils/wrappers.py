@@ -247,18 +247,20 @@ class MetaWorld(DreamerEnv):
     import metaworld.envs.mujoco.sawyer_xyz.v2 as sawyerv2
     domain, task = name.split('_', 1)
 
-    closeup = 'closeup' in task
-    task = task.replace('_closeup', '')
+    self._task_keys, task = parse(task, ['closeup', 'strict'])
     frontview = False
     frontview2 = False
     self.task_type = self.get_task_type(task)
 
     self.v2 = v2 = 'V2' in task
+    kwargs = {}
+    if self._task_keys['strict']:
+      kwargs['strict_reward'] = True
     with self.LOCK:
       if not v2:
         self._env = getattr(sawyer, task)()
       else:
-        self._env = getattr(sawyerv2, task)()
+        self._env = getattr(sawyerv2, task)(**kwargs)
     self._env.random_init = False
 
     self._action_repeat = action_repeat
@@ -271,7 +273,7 @@ class MetaWorld(DreamerEnv):
     self.rendered_goal = False
 
     self._offscreen = MjRenderContext(self._env.sim, True, 0, RENDERER, True)
-    if closeup:
+    if self._task_keys['closeup']:
       self._offscreen.cam.azimuth = 155
       self._offscreen.cam.elevation = -150
       self._offscreen.cam.distance = 0.9
@@ -841,3 +843,11 @@ class Async:
       print(f'Error in environment process: {stacktrace}')
       conn.send((self._EXCEPTION, stacktrace))
     conn.close()
+
+
+def parse(n, options):
+  # Get key values
+  keys = dict((k, k in n) for k in options)
+  # Remove keys from name
+  n = '_'.join([s for s in n.split('_') if s not in options])
+  return keys, n
