@@ -280,13 +280,6 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[0] = 0.3
       self._offscreen.cam.lookat[1] = 0.55
     elif "SawyerStickPushEnv" in task and "zoom" in domain:
-      # self._offscreen.cam.azimuth = 90
-      # self._offscreen.cam.elevation = -130
-      # self._offscreen.cam.distance = 0.9
-      # self._offscreen.cam.lookat[0] = 0.1
-      # self._offscreen.cam.lookat[1] = 0.55
-      # self._offscreen.cam.lookat[2] = -0.0
-      # Zoom
       self._offscreen.cam.azimuth = 220
       self._offscreen.cam.elevation = -140
       self._offscreen.cam.distance = 0.8
@@ -326,9 +319,9 @@ class MetaWorld(DreamerEnv):
 
 
   def get_task_type(self, task):
-    if 'Push' in task:
+    if 'SawyerPushEnv' in task:
       return 'push'
-    if 'Reach' in task:
+    if 'SawyerReachEnv' in task:
       return 'reach'
     if 'bin' in task.lower():
       return 'pickbin'
@@ -338,9 +331,10 @@ class MetaWorld(DreamerEnv):
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
     self.rendered_goal = False
-    # Submisstion config
-    # self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
-    # self._env.hand_init_pos = np.array([0., 0.55, 0.05])
+    # Submission config
+    if self.task_type == 'push':
+      self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
+      self._env.hand_init_pos = np.array([0., 0.55, 0.05])
     if self._rand_obj:
       if 'obj_init_pos' in self._env.init_config:
         # self._env.init_config['obj_init_pos'] = np.random.uniform(
@@ -348,16 +342,21 @@ class MetaWorld(DreamerEnv):
         #   self._env.observation_space.high[3:6],
         #   size=(self._env.observation_space.low[3:6].size)
         # )
+        # obj_init_pos = np.random.uniform(
+        #   (-0.1, 0.6, 0.02),
+        #   (0.1, 0.9, 0.02),
+        #   size=(3)
+        # )
         obj_init_pos = np.random.uniform(
-          (-0.1, 0.6, 0.02),
-          (0.1, 0.9, 0.02),
+          (-0.2, 0.6, 0.02),
+          (0.4, 0.9, 0.02),
           size=(3)
         )
         self._env.init_config['obj_init_pos'] = obj_init_pos
         # Initialize hand above object
         self._env.hand_init_pos = obj_init_pos
-        self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2) # 0.05
-    if self._rand_hand:
+        self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2) if self._rand_hand else 0.05
+    if self._rand_hand and not self._rand_obj:
       self._env.hand_init_pos = np.random.uniform(
         self._env.hand_low,
         self._env.hand_high,
