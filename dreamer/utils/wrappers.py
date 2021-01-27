@@ -300,12 +300,8 @@ class MetaWorld(DreamerEnv):
       self._offscreen.cam.lookat[1] = 0.65
       self._offscreen.cam.lookat[2] = -0.1
     elif "SawyerHammerEnv" in task and "zoom2" in domain:
-      self._offscreen.cam.azimuth = 300
-      self._offscreen.cam.elevation = -130
-      self._offscreen.cam.distance = 0.8
-      self._offscreen.cam.lookat[0] = 0.2
-      self._offscreen.cam.lookat[1] = 0.65
-      self._offscreen.cam.lookat[2] = -0.0
+      blox.mujoco.set_camera(
+        self._offscreen.cam, azimuth=300, elevation=-130, distance=0.8, lookat=[0.2, 0.65, -0.0])
     elif frontview:
       blox.mujoco.set_camera(
         self._offscreen.cam, azimuth=90, elevation=22 + 180, distance=0.82, lookat=[0., 0.55, 0.])
@@ -329,6 +325,8 @@ class MetaWorld(DreamerEnv):
       return 'reach'
     if 'bin' in task.lower():
       return 'pickbin'
+    if 'hammer' in task.lower():
+      return 'hammer'
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
@@ -478,16 +476,24 @@ class MetaWorldVis(MetaWorld):
     assert (len(state.shape) == 1)
     # Save init configs
     hand_init_pos = self._env.hand_init_pos
-    obj_init_pos = self._env.init_config['obj_init_pos']
+    init_config = self._env.init_config.copy()
     # Render state
-    hand_pos, obj_pos, hand_to_goal = np.split(state, 3)
-    self._env.hand_init_pos = hand_pos
-    self._env.init_config['obj_init_pos'] = obj_pos
+    if self.task_type == 'push':
+      hand_pos, obj_pos, hand_to_goal = np.split(state, 3)
+      self._env.hand_init_pos = hand_pos
+      self._env.init_config['obj_init_pos'] = obj_pos
+    if self.task_type == 'hammer':
+      hand_pos, obj_pos, _, _ = np.split(state, 4)
+      self._env.hand_init_pos = hand_pos
+      self._env.init_config['hammer_init_pos'] = obj_pos
+      self._env.init_config['nail_init_pos'] = state[7] - 0.64
+      # 0 - out, 0.1 - in
+      # 0.64 - out, 0.74 - in
     self._env.reset_model()
     obs = self._get_obs(state)
     # Revert environment
     self._env.hand_init_pos = hand_init_pos
-    self._env.init_config['obj_init_pos'] = obj_init_pos
+    self._env.init_config = init_config
     self._env.reset()
     return obs['image']
 

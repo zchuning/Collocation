@@ -312,7 +312,7 @@ class DreamerColloc(Dreamer):
     if verbose:
       print(f"Planned average dynamics loss: {metrics.dynamics[-1] / hor}")
       print(f"Planned average action violation: {metrics.action_violation[-1] / hor}")
-      print(f"Planned total reward: {metrics.rewards[-1]}")
+      print(f"Planned total reward: {predicted_rewards}")
       print(f"Planned average initial state violation: {init_loss}")
     if save_images:
       img_preds = self._decode(feat_preds).mode()
@@ -320,7 +320,8 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
       img_preds = None
-    info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)), 'plans': plans}
+    info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)),
+            'plans': tf.stack(plans, 0)[:, best_plan:best_plan+1]}
     info["predicted_rewards"] = predicted_rewards.numpy()
     return act_preds, img_preds, feat_preds, info
 
