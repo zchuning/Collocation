@@ -302,6 +302,7 @@ class DreamerColloc(Dreamer):
     # TODO make deterministic
     model_rew = tf.reduce_sum(self._reward(model_feats).mode(), [1])
     best_plan = tf.argmax(model_rew)
+    predicted_rewards = model_rew[best_plan]
     if batch > 1:
       print(f'plan rewards: {model_rew}, best plan: {best_plan}')
 
@@ -312,7 +313,7 @@ class DreamerColloc(Dreamer):
     if verbose and self._c.log_colloc_scalars:
       print(f"Planned average dynamics loss: {metrics.dynamics[-1] / hor}")
       print(f"Planned average action violation: {metrics.action_violation[-1] / hor}")
-      print(f"Planned total reward: {metrics.rewards[-1]}")
+      print(f"Planned total reward: {predicted_rewards}")
       print(f"Planned average initial state violation: {init_loss}")
     if save_images:
       img_preds = self._decode(feat_preds).mode()
@@ -320,11 +321,9 @@ class DreamerColloc(Dreamer):
       self.visualize_colloc(img_preds, act_preds, init_feat, step)
     else:
       img_preds = None
-    info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)), 'plans': plans}
-    if self._c.log_colloc_scalars:
-      imag_feats = self._dynamics.imagine_feat(act_preds[None, :], init_feat, deterministic=True)
-      predicted_rewards = tf.reduce_sum(self._reward(imag_feats).mode())
-      info["predicted_rewards"] = predicted_rewards.numpy()
+    info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)),
+            'plans': tf.stack(plans, 0)[:, best_plan:best_plan + 1]}
+    info["predicted_rewards"] = predicted_rewards.numpy()
     return act_preds, img_preds, feat_preds, info
 
   @tf.function()
