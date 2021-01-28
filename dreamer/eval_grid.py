@@ -10,10 +10,11 @@ from matplotlib import pyplot as plt
 ## TODO: replace max_dist with the maximum among episodes
 
 MW_PUSH_MAX_HAND_HEIGHT = 0.2
-MW_PUSH_MAX_OBJ_DIST = 0.25 # np.linalg.norm([0.2, 0.2])
+MW_PUSH_MAX_OBJ_DIST = 0.32 # 0.25 # np.linalg.norm([0.2, 0.2])
 MW_PUSH_MAX_GOAL_DIST = MW_PUSH_MAX_OBJ_DIST + MW_PUSH_MAX_HAND_HEIGHT
-MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3]) # 1.2
+MW_REACH_MAX_GOAL_DIST = 0.72 # np.linalg.norm([0.6, 0.4, 0.3])
 MW_HAMMER_MAX_GOAL_DIST = 0.3
+MW_BUTTON_PRESS_MAX_GOAL_DIST = np.linalg.norm([0.5, 0.38, 0.38])
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
 def get_task_config(task):
@@ -39,6 +40,10 @@ def get_task_config(task):
     elif 'SawyerHammerEnv' in task:
         assign_fn = assign_mw_hammer
         ymax = MW_HAMMER_MAX_GOAL_DIST
+        rew_key = 'sparse_reward'
+    elif 'SawyerButtonPressEnv' in task:
+        assign_fn = assign_mw_button_press
+        ymax = MW_BUTTON_PRESS_MAX_GOAL_DIST
         rew_key = 'sparse_reward'
     else:
         raise NotImplementedError(task)
@@ -86,7 +91,15 @@ def assign_mw_push(init_state):
 def assign_mw_reach(init_state):
     # hand_pos, _, goal_pos = np.split(init_state, [3, 9])
     hand_pos = init_state[:3]
-    goal_pos = np.array([-0.1, 0.8, 0.2])
+    goal_pos = np.array([-0.1, 0.8, 0.12])
+    goal_dist = np.linalg.norm(hand_pos - goal_pos)
+    return goal_dist
+
+def assign_mw_button_press(init_state):
+    hand_pos = init_state[:3]
+    if hand_pos[0] < 0:
+        return None
+    goal_pos = np.array([0, 0.78, 0.2])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
     return goal_dist
 
@@ -141,10 +154,13 @@ def create_grid(filenames, assign_fn, res, ymax, rew_key):
             episode = {k: episode[k] for k in episode.keys()}
         init_state = episode['state'][0]
         difficulty = assign_fn(init_state)
+        if difficulty is None:
+            # print('Filtered out hard initialization')
+            continue
         interval = ymax / res
         index = int(difficulty / interval)
         if index >= res:
-            print('Omitting out-of-bound initialization')
+            print('Omitted out-of-bound initialization')
             continue
         rews[index] += float(episode[rew_key].sum() > 0)
         frqs[index] += 1
