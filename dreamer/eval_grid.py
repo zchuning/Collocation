@@ -13,6 +13,7 @@ MW_PUSH_MAX_HAND_HEIGHT = 0.2
 MW_PUSH_MAX_OBJ_DIST = 0.25 # np.linalg.norm([0.2, 0.2])
 MW_PUSH_MAX_GOAL_DIST = MW_PUSH_MAX_OBJ_DIST + MW_PUSH_MAX_HAND_HEIGHT
 MW_REACH_MAX_GOAL_DIST = np.linalg.norm([0.6, 0.4, 0.3]) # 1.2
+MW_HAMMER_MAX_GOAL_DIST = 0.3
 PM_OBSTACLE_MAX_GOAL_DIST = 7.0 # 3 + 1.5 + 2.5
 
 def get_task_config(task):
@@ -34,6 +35,10 @@ def get_task_config(task):
     elif 'SawyerReachEnv' in task:
         assign_fn = assign_mw_reach
         ymax = MW_REACH_MAX_GOAL_DIST
+        rew_key = 'sparse_reward'
+    elif 'SawyerHammerEnv' in task:
+        assign_fn = assign_mw_hammer
+        ymax = MW_HAMMER_MAX_GOAL_DIST
         rew_key = 'sparse_reward'
     else:
         raise NotImplementedError(task)
@@ -84,6 +89,12 @@ def assign_mw_reach(init_state):
     goal_pos = np.array([-0.1, 0.8, 0.2])
     goal_dist = np.linalg.norm(hand_pos - goal_pos)
     return goal_dist
+
+def assign_mw_hammer(init_state):
+    hammer_pos = init_state[3:6]
+    nail_pos = init_state[6:9]
+    hammer_dist = np.linalg.norm(hammer_pos - nail_pos)
+    return hammer_dist
 
 
 def plot_grid(rew_list, frq_list, lbl_list, title, figdir, ymax):
