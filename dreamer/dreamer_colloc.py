@@ -67,7 +67,7 @@ def define_config():
   config.visualize = True
   config.logdir_colloc = config.logdir  # logdir is used for loading the model, while logdir_colloc for output
   config.logging = 'tensorboard'  # 'tensorboard' or 'disk'
-  config.log_colloc_scalars = False
+  config.log_colloc_scalars = True
   config.eval_tasks = 1
   config.eval_store_episodes = True
   # Goal-conditioned
@@ -216,7 +216,7 @@ class DreamerColloc(Dreamer):
         rew_raw = self._reward(feat_preds).mode()
 
         # Record losses and effective coefficients
-        metrics.rewards.append(tf.reduce_sum(rew_raw))
+        metrics.rewards.append(tf.reduce_sum(rew_raw, 1))
         metrics.dynamics_coeff.append(self._c.dyn_res_wt**2 * tf.reduce_sum(lam))
         metrics.action_coeff.append(self._c.act_res_wt**2 * tf.reduce_sum(nu))
 
@@ -315,6 +315,7 @@ class DreamerColloc(Dreamer):
       print(f"Planned average action violation: {metrics.action_violation[-1] / hor}")
       print(f"Planned total reward: {predicted_rewards}")
       print(f"Planned average initial state violation: {init_loss}")
+    metrics.rewards = [r[best_plan] for r in metrics.rewards]
     if save_images:
       img_preds = self._decode(feat_preds).mode()
       self.logger.log_graph('losses', {f'{c[0]}/{step}': c[1] for c in metrics.items()})
@@ -322,7 +323,8 @@ class DreamerColloc(Dreamer):
     else:
       img_preds = None
     info = {'metrics': map_dict(lambda x: x[-1] / hor, dict(metrics)),
-            'plans': tf.stack(plans, 0)[:, best_plan:best_plan + 1]}
+            'plans': tf.stack(plans, 0)[:, best_plan:best_plan + 1],
+            'curves': dict(metrics)}
     info["predicted_rewards"] = predicted_rewards.numpy()
     return act_preds, img_preds, feat_preds, info
 
