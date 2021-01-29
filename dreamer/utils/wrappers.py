@@ -319,10 +319,16 @@ class MetaWorld(DreamerEnv):
 
 
   def get_task_type(self, task):
-    if 'SawyerPushEnv' in task:
-      return 'push'
     if 'SawyerReachEnv' in task:
       return 'reach'
+    if 'SawyerButtoPressEnv' in task:
+      return 'button'
+    if 'SawyerPushEnv' in task:
+      return 'push'
+    if 'SawyerHammerEnv' in task:
+      return 'hammer'
+    if 'SawyerDoorCloseEnv' in task:
+      return 'door'
     if 'bin' in task.lower():
       return 'pickbin'
     if 'hammer' in task.lower():
@@ -336,17 +342,7 @@ class MetaWorld(DreamerEnv):
       self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
       self._env.hand_init_pos = np.array([0., 0.55, 0.05])
     if self._rand_obj:
-      if 'obj_init_pos' in self._env.init_config:
-        # self._env.init_config['obj_init_pos'] = np.random.uniform(
-        #   self._env.observation_space.low[3:6],
-        #   self._env.observation_space.high[3:6],
-        #   size=(self._env.observation_space.low[3:6].size)
-        # )
-        # obj_init_pos = np.random.uniform(
-        #   (-0.1, 0.6, 0.02),
-        #   (0.1, 0.9, 0.02),
-        #   size=(3)
-        # )
+      if self.task_type == 'push':
         obj_init_pos = np.random.uniform(
           (-0.2, 0.6, 0.02),
           (0.4, 0.9, 0.02),
@@ -355,13 +351,30 @@ class MetaWorld(DreamerEnv):
         self._env.init_config['obj_init_pos'] = obj_init_pos
         # Initialize hand above object
         self._env.hand_init_pos = obj_init_pos
-        self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2) if self._rand_hand else 0.05
-    if self._rand_hand and not self._rand_obj:
-      self._env.hand_init_pos = np.random.uniform(
-        self._env.hand_low,
-        self._env.hand_high,
-        size=(self._env.hand_low.size)
-      )
+        # Initialize hand with fixed height, can be overridden by rand_hand
+        self._env.hand_init_pos[2] = 0.05
+      elif self.task_type == 'hammer':
+        hammer_init_pos = np.random.uniform(
+          (-0.1, 0.3, 0.04),
+          (0.3, 0.7, 0.04),
+          size=(3)
+        )
+        self._env.init_config['hammer_init_pos'] = hammer_init_pos
+        # Initialize hand with fixed displacement, can be overridden by rand_hand
+        self._env.hand_init_pos = hammer_init_pos + np.array([0., -0.1, 0.16])
+      elif self.task_type == 'door':
+        door_init_angle = np.random.rand()
+        self._env.init_config['obj_init_angle'] = door_init_angle
+        self._env.obj_init_angle = door_init_angle
+    if self._rand_hand:
+      if self.task_type == 'push':
+        self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2)
+      else:
+        self._env.hand_init_pos = np.random.uniform(
+          self._env.hand_low,
+          self._env.hand_high,
+          size=(self._env.hand_low.size)
+        )
     if self._rand_goal:
       self._env.goal = np.random.uniform(
         self._env.goal_space.low,
