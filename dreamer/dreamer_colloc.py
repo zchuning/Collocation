@@ -52,9 +52,9 @@ def define_config():
   config.lam_step = 1.2
   config.nu_lr = 100
   config.mu_int = -1
-  config.dyn_threshold = 1e-5
-  config.act_threshold = 1e-5
-  config.rew_threshold = 1e-5
+  config.dyn_threshold = 1e-4
+  config.act_threshold = 1e-4
+  config.rew_threshold = 1e-4
   config.coeff_normalization = 1
   config.dyn_loss_scale = 1
   config.act_loss_scale = 1
