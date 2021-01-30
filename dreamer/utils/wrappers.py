@@ -267,7 +267,7 @@ class MetaWorld(DreamerEnv):
     self._rand_goal = rand_goal
     self._rand_hand = rand_hand
     self._rand_obj = rand_obj
-    self._width = 64
+    self._width = 200
     self._size = (self._width, self._width)
     self.env_rew_scale = env_rew_scale
     self.rendered_goal = False
@@ -329,18 +329,28 @@ class MetaWorld(DreamerEnv):
       return 'hammer'
     if 'SawyerDoorCloseEnv' in task:
       return 'door'
+    if 'SawyerDrawerCloseEnv' in task or 'SawyerDrawerOpenEnv' in task:
+      return 'drawer'
+    if 'SawyerWindowCloseEnv' in task or 'SawyerWindowOpenEnv' in task:
+      return 'window'
     if 'bin' in task.lower():
       return 'pickbin'
-    if 'hammer' in task.lower():
-      return 'hammer'
 
   # TODO remove this. This has to be inside dreamer, but the argument is hidden inside wrappers unfortunately...
   def reset(self):
     self.rendered_goal = False
-    # Submission config
+    # Evaluation config
     if self.task_type == 'push':
       self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
       self._env.hand_init_pos = np.array([0., 0.55, 0.05])
+    elif self.task_type == 'door':
+      self._env.hand_init_pos = np.array([-0.4, 0.5, 0.2]
+    elif self.task_type == 'drawer':
+      self._env.hand_init_pos = self._env.obj_init_pos + np.array([0, -0.31, 0.15])
+    elif self.task_type == 'window':
+      self._env.hand_init_pos = self._env.obj_init_pos + np.array([0.2, -0.1, 0.05])
+
+
     if self._rand_obj:
       if self.task_type == 'push':
         obj_init_pos = np.random.uniform(
@@ -363,18 +373,39 @@ class MetaWorld(DreamerEnv):
         # Initialize hand with fixed displacement, can be overridden by rand_hand
         self._env.hand_init_pos = hammer_init_pos + np.array([0., -0.1, 0.16])
       elif self.task_type == 'door':
-        door_init_angle = np.random.rand()
-        self._env.init_config['obj_init_angle'] = door_init_angle
-        self._env.obj_init_angle = door_init_angle
+        door_init_pos = - np.random.uniform(0, 1.3)
+        self._env.init_config['door_init_pos'] = door_init_pos
+        # self._env.hand_init_pos = self._env.hand_init_pos + np.array([0, 0, 0.40])
+      elif self.task_type == 'drawer':
+        drawer_init_pos = np.random.uniform(0, 0.15)
+        self._env.init_config['drawer_init_pos'] = drawer_init_pos
+        # -0.16 is the handle protrusion
+        self._env.hand_init_pos = self._env.obj_init_pos + np.array([0, -0.16-drawer_init_pos, 0.15])
+      elif self.task_type == 'window':
+        slider_init_pos = np.random.uniform(0, 0.2)
+        self._env.init_config['slider_init_pos'] = slider_init_pos
+        self._env.hand_init_pos = self._env.obj_init_pos + np.array([slider_init_pos, -0.1, 0.05])
+
     if self._rand_hand:
       if self.task_type == 'push':
         self._env.hand_init_pos[2] = np.random.uniform(0.05, 0.2)
+      elif self.task_type == 'door':
+        self._env.hand_init_pos = np.random.uniform(
+          (-0.5, 0.4, 0.05),
+          (0, 0.8, 0.5),
+          size=(3)
+        )
+      elif self.task_type == 'drawer':
+        self._env.hand_init_pos[2] = np.random.uniform(0.15, 0.2)
+      elif self.task_type == 'window':
+        self._env.hand_init_pos[1] = self._env.obj_init_pos[1] - np.random.uniform(0.1, 0.2)
       else:
         self._env.hand_init_pos = np.random.uniform(
           self._env.hand_low,
           self._env.hand_high,
           size=(self._env.hand_low.size)
         )
+
     if self._rand_goal:
       self._env.goal = np.random.uniform(
         self._env.goal_space.low,
