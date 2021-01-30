@@ -344,7 +344,7 @@ class MetaWorld(DreamerEnv):
       self._env.init_config['obj_init_pos'] = np.array([0., 0.55, 0.02])
       self._env.hand_init_pos = np.array([0., 0.55, 0.05])
     elif self.task_type == 'door':
-      self._env.hand_init_pos = np.array([-0.4, 0.5, 0.2]
+      self._env.hand_init_pos = np.array([-0.4, 0.5, 0.2])
     elif self.task_type == 'drawer':
       self._env.hand_init_pos = self._env.obj_init_pos + np.array([0, -0.31, 0.15])
     elif self.task_type == 'window':
