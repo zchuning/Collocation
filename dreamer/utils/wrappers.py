@@ -267,7 +267,7 @@ class MetaWorld(DreamerEnv):
     self._rand_goal = rand_goal
     self._rand_hand = rand_hand
     self._rand_obj = rand_obj
-    self._width = 200
+    self._width = 64
     self._size = (self._width, self._width)
     self.env_rew_scale = env_rew_scale
     self.rendered_goal = False
